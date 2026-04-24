@@ -11,6 +11,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+import { subProblems } from './sub-problems';
 
 export const admins = pgTable('admins', {
   id: serial('id').primaryKey(),
@@ -125,6 +126,7 @@ export const rounds = pgTable('rounds', {
   retryCount: integer('retry_count').default(0),
   errorMessage: text('error_message'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
+  subProblemId: uuid('sub_problem_id').references(() => subProblems.id), // links round to a specific sub-problem
 }, (table) => ({
   projectIdx: index('rounds_project_idx').on(table.projectId),
   statusIdx: index('rounds_status_idx').on(table.status),
