@@ -1,4 +1,5 @@
 import { nextStep } from './initiation-state';
+import { redis } from '../../data/redis';
 import { initiation } from '../../util/logger';
 // ── Step Renderers ────────────────────────────────────────────────────────────
 async function sendGreeting(ctx, state) {
@@ -173,70 +174,43 @@ async function sendConfirmConfig(ctx, state) {
     });
 }
 async function sendBotCreation(ctx, state) {
-    await ctx.reply('⏳ Setting up your project...');
+    await ctx.reply('⏳ Creating your project bot...');
+    const { createPendingProject, buildProjectCreationLink } = await import('../../manager/managed-bots/creation');
+    const projectName = state.config.name ?? 'My Project';
     try {
-        const { projects, admins } = await import('../../data/schema/projects');
-        const { db } = await import('../../data/db');
-        const { redis } = await import('../../data/redis');
-        const { eq } = await import('drizzle-orm');
-        const projectName = state.config.name ?? 'My Project';
-        // Get or create admin record
-        const [admin] = await db.select().from(admins).where(eq(admins.telegramId, state.telegramId)).limit(1);
-        let adminDbId;
-        if (!admin) {
-            const [newAdmin] = await db.insert(admins).values({ telegramId: state.telegramId }).returning();
-            adminDbId = newAdmin.id;
-        }
-        else {
-            adminDbId = admin.id;
-        }
-        // Create project in DB
-        const [project] = await db
-            .insert(projects)
-            .values({
-            adminId: adminDbId,
+        const { projectId, pendingKey } = await createPendingProject({
+            adminTelegramId: state.telegramId,
             name: projectName,
             description: state.config.description ?? '',
-            status: 'pending',
-            config: {
-                cycleFrequency: state.config.cycleFrequency ?? 'weekly',
-                questionsPerRound: state.config.questionDepth === 'shallow' ? 2 : state.config.questionDepth === 'deep' ? 5 : 3,
-                questionDepth: state.config.questionDepth ?? 'medium',
-                anonymity: state.config.anonymity ?? 'optional',
-                votingMechanism: 'inline_buttons',
-                reportFrequency: 'per_cycle',
-                actionTracking: state.config.actionTracking ?? false,
-                nudgeAfterHours: 24,
-                language: 'en',
-                timezone: 'UTC',
-            },
-        })
-            .returning();
-        // Store project ID keyed by admin so we can retrieve it on group add
+            projectType: state.config.projectType ?? 'team',
+            teamSizeRange: state.config.teamSizeRange ?? '2-5',
+            cycleFrequency: state.config.cycleFrequency ?? 'weekly',
+            questionDepth: state.config.questionDepth ?? 'medium',
+            anonymity: state.config.anonymity ?? 'optional',
+            actionTracking: state.config.actionTracking ?? false,
+            telegramContexts: state.config.telegramContexts ?? ['group'],
+            forumTopicsEnabled: ['6-12', '13-30', '30+'].includes(state.config.teamSizeRange ?? ''),
+            reportDestination: 'group',
+        });
+        const { creationLink, suggestedUsername } = buildProjectCreationLink(projectName);
         await redis.setex(`pending:${state.telegramId}`, 86400, JSON.stringify({
-            projectId: project.id,
+            projectId,
+            pendingKey,
+            suggestedUsername,
             name: projectName,
             createdAt: new Date().toISOString(),
         }));
-        await ctx.reply(`🔧 *${projectName} — project created!*
-
-` +
-            `Now I need to create your project's dedicated bot...
-
-` +
-            `Click the link below to create the bot for this project:
-
-` +
-            `👉 https://t.me/Zolara_bot?start=createbot_${project.id}
-
-` +
-            `This will open BotFather where you can approve the bot creation.
-` +
-            `Once done, I'll automatically set up everything!`, { parse_mode: 'Markdown' });
+        const { escapeMarkdownV2 } = await import('../../util/telegram-sender');
+        const escapedName = escapeMarkdownV2(projectName);
+        await ctx.reply(`🔗 *Your project bot is almost ready!*\n\n` +
+            `Tap the link below to create your project's bot in Telegram:\n\n` +
+            `[Create ${escapedName} Bot](${creationLink})\n\n` +
+            `This opens BotFather — just tap "Yes" to approve.\n` +
+            `I'll automatically finish setup once it's created.`, { parse_mode: 'Markdown' });
     }
     catch (err) {
         initiation.botCreationFailed({ telegramId: state.telegramId, step: state.step }, err);
-        await ctx.reply('⚠️ Something went wrong. Please try again later.\n' +
+        await ctx.reply('⚠️ Something went wrong. Please try again.\n' +
             'You can start over with /create');
     }
 }

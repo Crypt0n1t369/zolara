@@ -80,14 +80,31 @@ export async function handleStartRoundCommand(ctx, args) {
         return;
     }
     const project = allProjects[0];
-    // Parse topic from args if provided
-    const topic = args.trim() || 'General check-in';
+    // Parse topic and anonymity flag from args
+    // Examples:
+    //   /startround Q3 planning
+    //   /startround Q3 planning --anonymous
+    //   /startround --attributed
+    //   /startround --optional
+    const trimmed = args.trim();
+    const anonMatch = trimmed.match(/--(\w+)$/);
+    let topic = trimmed;
+    let anonymity;
+    if (anonMatch) {
+        const flag = anonMatch[1];
+        if (['anonymous', 'attributed', 'optional'].includes(flag)) {
+            anonymity = flag === 'anonymous' ? 'full' : flag;
+            topic = trimmed.replace(/--\w+$/, '').trim();
+        }
+    }
+    topic = topic || 'General check-in';
     try {
-        const { roundId, status } = await triggerRound(project.id, topic);
+        const { roundId, status } = await triggerRound(project.id, topic, { anonymity });
+        const anonLabel = anonymity === 'full' ? 'Anonymous' : anonymity === 'attributed' ? 'Attributed' : anonymity === 'optional' ? 'Optional-anonymous' : null;
+        const anonLine = anonLabel ? `\n🔒 Privacy: *${anonLabel}*\n` : '';
         const successMsg = `🎯 *Round started!*\n\n` +
             `Project: *${project.name}*\n` +
-            `Topic: ${topic}\n` +
-            `Round ID: ${roundId.slice(0, 8)}...\n\n` +
+            `Topic: ${topic}${anonLine}\n` +
             `Members are being sent questions via DM.\n` +
             `The synthesis report will be posted here when the round closes.`;
         await ctx.reply(successMsg, { parse_mode: 'Markdown' });

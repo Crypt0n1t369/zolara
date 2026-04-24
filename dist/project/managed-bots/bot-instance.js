@@ -26,13 +26,18 @@ const botCache = new Map();
  * Create or get a cached Bot instance for a project.
  * Bot is created with the project's own token (or fallback to Zolara token for control bot).
  */
-export function createProjectBot(botToken, projectId) {
+export async function createProjectBot(botToken, projectId) {
     const cacheKey = projectId;
     const token = botToken ?? config.ZOLARA_BOT_TOKEN;
     if (botCache.has(cacheKey)) {
         return botCache.get(cacheKey);
     }
     const bot = new Bot(token);
+    // Ensure bot is initialized (fetches /getMe so handleUpdate works)
+    try {
+        await bot.init();
+    }
+    catch (e) { /* token may be invalid */ }
     // All message handling is per-project — we already know the projectId
     wireProjectBotHandlers(bot, projectId);
     botCache.set(cacheKey, bot);
@@ -43,19 +48,47 @@ export function createProjectBot(botToken, projectId) {
  */
 function wireProjectBotHandlers(bot, projectId) {
     // /start — member claim flow (deep link)
-    bot.command('start', async (ctx) => {
-        const text = ctx.message?.text ?? '';
-        const args = text.replace('/start', '').trim();
-        if (args.startsWith('claim_')) {
-            // Member joining via invite link
-            const targetProjectId = args.replace('claim_', '');
-            await handleMemberClaimForProject(ctx, targetProjectId);
+    // Use message:text with explicit check instead of bot.command() because:
+    // - Telegram deep-link args don't always include bot_command entity
+    // - bot.command() silently drops messages without entity, breaking claim flow
+    bot.on('message:text', async (ctx) => {
+        const text = ctx.message.text;
+        if (text.startsWith('/start')) {
+            const args = text.replace(/^\/start\s*/, '').trim();
+            if (args.startsWith('claim_')) {
+                const targetProjectId = args.replace('claim_', '');
+                await handleMemberClaimForProject(ctx, targetProjectId);
+                return;
+            }
+            else {
+                await ctx.reply('👋 Welcome to Zolara!\n\n' +
+                    'This bot is used by your team to run alignment rounds.\n' +
+                    'Use the invite link from your admin to join your project.', { parse_mode: 'Markdown' });
+                return;
+            }
         }
-        else {
-            // Regular /start — show welcome
-            await ctx.reply('👋 Welcome to Zolara!\\n\\n' +
-                'This bot is used by your team to run alignment rounds.\\n' +
-                'Use the invite link from your admin to join your project.', { parse_mode: 'Markdown' });
+        // Text messages (onboarding replies, question answers)
+        const userId = ctx.from.id;
+        // Check for ongoing onboarding
+        const onboardState = await loadOnboardingState(userId);
+        if (onboardState && onboardState.projectId === projectId) {
+            await handleOnboardingTextForProject(ctx, onboardState, text, projectId);
+            return;
+        }
+        // Check for claim in progress
+        const claimState = await loadClaimState(userId);
+        if (claimState && claimState.projectId === projectId) {
+            await handleClaimTextForProject(ctx, claimState, text, projectId);
+            return;
+        }
+        // Question answering — check Redis for active question
+        const qStateRaw = await redis.get(`proj:${projectId}:q:${userId}`);
+        if (qStateRaw) {
+            const { questionId, roundId } = JSON.parse(qStateRaw);
+            await redis.del(`proj:${projectId}:q:${userId}`);
+            await saveResponseForProject(userId, projectId, roundId, questionId, text);
+            await ctx.reply('✅ Received! Your perspective has been recorded.\n\n' +
+                'The synthesis will be posted to your group when the round closes.', { parse_mode: 'Markdown' });
         }
     });
     // Callback queries (inline button presses)
@@ -148,42 +181,13 @@ function wireProjectBotHandlers(bot, projectId) {
             console.error('[MessageReaction] Failed to store reaction:', err);
         }
     });
-    // Text messages (onboarding replies, question answers)
-    bot.on('message:text', async (ctx) => {
-        const text = ctx.message.text;
-        if (text.startsWith('/'))
-            return; // Commands handled separately
-        const userId = ctx.from.id;
-        // Check for ongoing onboarding
-        const onboardState = await loadOnboardingState(userId);
-        if (onboardState && onboardState.projectId === projectId) {
-            await handleOnboardingTextForProject(ctx, onboardState, text, projectId);
-            return;
-        }
-        // Check for claim in progress
-        const claimState = await loadClaimState(userId);
-        if (claimState && claimState.projectId === projectId) {
-            await handleClaimTextForProject(ctx, claimState, text, projectId);
-            return;
-        }
-        // Question answering — check Redis for active question
-        const qStateRaw = await redis.get(`proj:${projectId}:q:${userId}`);
-        if (qStateRaw) {
-            const { questionId, roundId } = JSON.parse(qStateRaw);
-            await redis.del(`proj:${projectId}:q:${userId}`);
-            await saveResponseForProject(userId, projectId, roundId, questionId, text);
-            await ctx.reply('✅ Received! Your perspective has been recorded.\\n\\n' +
-                'The synthesis will be posted to your group when the round closes.', { parse_mode: 'Markdown' });
-            return;
-        }
-    });
 }
 // ── Per-project handler implementations ───────────────────────────────────────
 async function handleMemberClaimForProject(ctx, targetProjectId) {
     const userId = ctx.from.id;
-    // Load project
+    // Load project config for anonymity setting
     const [project] = await db
-        .select({ id: projects.id, name: projects.name, status: projects.status })
+        .select({ id: projects.id, name: projects.name, status: projects.status, config: projects.config })
         .from(projects)
         .where(eq(projects.id, targetProjectId))
         .limit(1);
@@ -191,12 +195,15 @@ async function handleMemberClaimForProject(ctx, targetProjectId) {
         await ctx.reply('❌ Project not found. This invite link may be expired.');
         return;
     }
+    const projectConfig = project.config ?? {};
+    const anonymity = projectConfig['anonymity'] ?? 'optional';
     const state = {
         phase: 'claim',
         projectId: targetProjectId,
         projectName: project.name,
         telegramId: userId,
         claimStartedAt: new Date().toISOString(),
+        anonymity,
     };
     await saveClaimState(state);
     await handleClaimWelcome(ctx, state);

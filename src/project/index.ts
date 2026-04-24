@@ -137,13 +137,61 @@ zolaraBot.command('cancel', async (ctx) => {
 
 // ── Admin: Project Management ──────────────────────────────────────────────────
 
+/**
+ * Redis key for admin's currently selected project (30min TTL).
+ */
+const PROJECT_SELECTION_TTL = 1800; // 30 minutes
+
+function projectSelectionKey(telegramId: number): string {
+  return `selected_project:${telegramId}`;
+}
+
+/**
+ * Build an inline keyboard for project selection.
+ */
+function buildProjectKeyboard(
+  choices: Array<{ id: string; name: string; status: string }>,
+  selectedId?: string
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const p of choices) {
+    const icon = p.status === 'active' ? '🟢' : '⚪';
+    const check = p.id === selectedId ? ' ✅' : '';
+    kb.text(`${icon} ${p.name}${check}`, `project:select:${p.id}`).row();
+  }
+  return kb;
+}
+
+/**
+ * Resolve the admin's currently selected project.
+ * Checks Redis cache first → falls back to default (active project or most recent).
+ */
 async function resolveAdminProject(adminTelegramId: number): Promise<{
-  project: { id: string; name: string; status: string } | null;
+  project: { id: string; name: string; status: string; botUsername?: string | null } | null;
   hasMultiple: boolean;
   choices: Array<{ id: string; name: string; status: string }>;
 }> {
+  // Check Redis cache first
+  const cachedId = await redis.get(projectSelectionKey(adminTelegramId));
+  if (cachedId) {
+    const [row] = await db
+      .select({ id: projects.id, name: projects.name, status: projects.status, botUsername: projects.botUsername })
+      .from(projects)
+      .where(eq(projects.id, cachedId))
+      .limit(1);
+    if (row) {
+      return {
+        project: { id: row.id, name: row.name ?? 'Unknown', status: row.status ?? 'pending', botUsername: row.botUsername },
+        hasMultiple: false,
+        choices: [],
+      };
+    }
+    // Stale cache entry — delete it
+    await redis.del(projectSelectionKey(adminTelegramId));
+  }
+
   const rows = await db
-    .select({ id: projects.id, name: projects.name, status: projects.status })
+    .select({ id: projects.id, name: projects.name, status: projects.status, botUsername: projects.botUsername })
     .from(projects)
     .innerJoin(admins, eq(admins.id, projects.adminId))
     .where(eq(admins.telegramId, adminTelegramId))
@@ -153,10 +201,11 @@ async function resolveAdminProject(adminTelegramId: number): Promise<{
   if (rows.length === 0) return { project: null, hasMultiple: false, choices: [] };
   const active = rows.filter((r) => r.status === 'active');
   const first = active[0] ?? rows[0];
-  const project: { id: string; name: string; status: string } = {
+  const project: { id: string; name: string; status: string; botUsername?: string | null } = {
     id: first.id,
     name: first.name ?? 'Unknown',
     status: first.status ?? 'pending',
+    botUsername: first.botUsername,
   };
   return {
     project,
@@ -174,8 +223,15 @@ zolaraBot.command('projects', async (ctx) => {
   }
 
   if (hasMultiple) {
-    const lines = choices.map((c, i) => `${i + 1}. *${c.name}* — ${c.status}`).join('\n');
-    await ctx.reply(`*Your projects:*\n\n${lines}\n\nCurrently selected: *${project.name}*\n\nUse /startround, /cancelround, or /members on the selected project.`);
+    const statusIcon = (s: string) => s === 'active' ? '🟢' : '⚪';
+    const lines = choices.map((p) => `${statusIcon(p.status)} ${p.name}`).join('\n');
+    await ctx.reply(
+      `*Your projects:*\n\n${lines}\n\nTap to select. Commands will use the selected project.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: buildProjectKeyboard(choices),
+      }
+    );
     return;
   }
 
@@ -278,11 +334,21 @@ zolaraBot.command('invite', async (ctx) => {
   const { project } = await resolveAdminProject(ctx.from!.id);
   if (!project) { await ctx.reply("You don't have any projects yet."); return; }
 
-  // Always use @Zolara_bot for invite links (single-bot mode)
-  const inviteLink = `https://t.me/Zolara_bot?start=claim_${project.id}`;
+  // Look up the project to get the actual bot username
+  const [proj] = await db
+    .select({ name: projects.name, botUsername: projects.botUsername })
+    .from(projects)
+    .where(eq(projects.id, project.id))
+    .limit(1);
+
+  const botUsername = proj?.botUsername ?? 'Zolara_bot';
+  const inviteLink = `https://t.me/${botUsername}?start=claim_${project.id}`;
 
   await ctx.reply(
-    `*${project.name} - Invite Link*\n\nShare this with your team:\n\n${inviteLink}\n\nMembers tap "Yes, I'm in" to join and receive questions.`,
+    `*${project.name} - Invite Link*\n\n` +
+    `Share this with your team:\n\n` +
+    `${inviteLink}\n\n` +
+    `Members tap "Yes, I'm in" to join and receive questions.`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -586,6 +652,25 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     }
 
     await ctx.answerCallbackQuery(' ');
+    return;
+  }
+
+  // Project selection callbacks
+  if (data.startsWith('project:select:')) {
+    const projectId = data.split(':')[2];
+    if (!projectId) { await ctx.answerCallbackQuery('❌ Invalid selection'); return; }
+
+    // Verify this project belongs to the admin
+    const { choices } = await resolveAdminProject(userId);
+    const valid = choices.find((c) => c.id === projectId);
+    if (!valid) { await ctx.answerCallbackQuery('❌ Project not found'); return; }
+
+    // Cache selection for 30 minutes
+    await redis.setex(projectSelectionKey(userId), PROJECT_SELECTION_TTL, projectId);
+
+    const statusIcon = valid.status === 'active' ? '🟢' : '⚪';
+    await ctx.answerCallbackQuery(`✅ ${valid.name} selected`, { show_alert: true } as any);
+    await ctx.editMessageReplyMarkup({ reply_markup: buildProjectKeyboard(choices, projectId) });
     return;
   }
 });

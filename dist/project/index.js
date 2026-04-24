@@ -5,7 +5,7 @@
  * Admin flow: /create, /startround, /cancelround, /projects, /members, /invite, /status
  * Member flow: /start claim_xxx → commitment → onboarding → question answering
  */
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { config } from '../config';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
@@ -13,6 +13,9 @@ import { projects, admins, members, rounds } from '../data/schema/projects';
 import { eq, desc, and } from 'drizzle-orm';
 import { db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
+import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
+import { isPhaseActive } from '../engine/phases/flags';
+import { setRuntimeFlag, listRuntimeFlags } from '../util/runtime-flags';
 import { handleAddAdminCommand, handleRemoveAdminCommand, handleTransferOwnershipCommand, handleAdminsCommand, handleSettingsCommand, handleSettingsCallback, handleSettingsReply, } from '../manager/admin-management';
 import { nextStep, } from './flows/initiation-state';
 import { handleInitiationStep, handleCallback, } from './flows/initiation-steps';
@@ -130,8 +133,27 @@ zolaraBot.command('startround', async (ctx) => {
     }
     const topic = ctx.match.trim() || 'General check-in';
     try {
-        const { roundId } = await triggerRound(project.id, topic);
-        await ctx.reply(`🎯 *Round started!*\n\nProject: *${project.name}*\nTopic: ${topic}\nRound ID: ${roundId.slice(0, 8)}...\n\nCommitted members are being sent questions via DM.`, { parse_mode: 'Markdown' });
+        // Use Phase 2 validation flow if flag is active, otherwise fall back to baseline
+        if (isPhaseActive('PHASE_PROBLEM_DEF')) {
+            const result = await validateAndTriggerRound(project.id, topic);
+            if (result.validationStatus === 'voting') {
+                await ctx.reply(`🗳 *Validation started for "${topic}"*
+
+` +
+                    `Your team is being asked to confirm the topic is clearly defined before we explore it.
+` +
+                    `Voting open for 24h. You'll be notified when the vote completes.\n\n` +
+                    `Problem Definition ID: ${result.problemDefinitionId?.slice(0, 8)}...`, { parse_mode: 'Markdown' });
+            }
+            else {
+                await ctx.reply(result.message);
+            }
+        }
+        else {
+            const { roundId } = await triggerRound(project.id, topic);
+            await ctx.reply(`🎯 *Round started!*\n\nProject: *${project.name}*\nTopic: ${topic}\nRound ID: ${roundId.slice(0, 8)}...\n\n` +
+                `Committed members are being sent questions via DM.`, { parse_mode: 'Markdown' });
+        }
     }
     catch (err) {
         await ctx.reply(`⚠️ Could not start round: ${err instanceof Error ? err.message : String(err)}`);
@@ -220,6 +242,99 @@ zolaraBot.command('admins', async (ctx) => {
 });
 zolaraBot.command('settings', async (ctx) => {
     await handleSettingsCommand(ctx);
+});
+// ── Phase flag control (admin only) ──────────────────────────────────────────
+const VALID_PHASES = [
+    'PHASE_SUB_PROBLEMS',
+    'PHASE_PROBLEM_DEF',
+    'PHASE_CROSS_LINK',
+    'PHASE_ITERATION',
+    'PHASE_RICH_SYNTHESIS',
+    'PHASE_MEETING_PREP',
+    'PHASE_MEETING',
+    'PHASE_AUTO_UPDATE',
+];
+const PHASE_SHORT = {
+    PHASE_SUB_PROBLEMS: '🗂 Sub-problems',
+    PHASE_PROBLEM_DEF: '🗳 Problem Validation',
+    PHASE_CROSS_LINK: '🔗 Cross-linking',
+    PHASE_ITERATION: '🔄 Iteration',
+    PHASE_RICH_SYNTHESIS: '📊 Rich Synthesis',
+    PHASE_MEETING_PREP: '📋 Meeting Prep',
+    PHASE_MEETING: '🗓 Meeting',
+    PHASE_AUTO_UPDATE: '🔁 Auto-update',
+};
+/**
+ * Build the phase status inline keyboard.
+ * Each phase: [short name] [🟢 ON] or [⚪ OFF]
+ */
+function buildPhaseKeyboard(flags) {
+    const kb = new InlineKeyboard();
+    for (const key of VALID_PHASES) {
+        const value = flags[key] ?? 'disabled';
+        const toggleLabel = value === 'active' ? '🟢 ON' : '⚪ OFF';
+        kb.text(PHASE_SHORT[key] ?? key, `phase:detail:${key}`).text(toggleLabel, `phase:toggle:${key}`).row();
+    }
+    kb.row().text('🔄 Refresh', 'phase:refresh');
+    return kb;
+}
+/**
+ * Build detail keyboard for a single phase.
+ * Shows: [🔙 Back] [🟢 Enable] / [⚪ Disable]
+ */
+function buildPhaseDetailKeyboard(key, currentValue) {
+    const kb = new InlineKeyboard();
+    const descriptions = {
+        PHASE_SUB_PROBLEMS: 'Sub-problem infrastructure (tables + round linkage)',
+        PHASE_PROBLEM_DEF: 'Problem validation gate before exploration',
+        PHASE_CROSS_LINK: 'Cross-linking responses during gathering',
+        PHASE_ITERATION: 'Iteration loop post-exploration',
+        PHASE_RICH_SYNTHESIS: 'Richer synthesis output',
+        PHASE_MEETING_PREP: 'Meeting preparation brief',
+        PHASE_MEETING: 'Meeting transcript integration',
+        PHASE_AUTO_UPDATE: 'Auto-update project map post-meeting',
+    };
+    kb.text(`ℹ️ ${descriptions[key] ?? key}`, 'phase:noop').row();
+    kb.text('🔙 Back to all phases', 'phase:back').row();
+    if (currentValue === 'active') {
+        kb.text('⚪ Disable', `phase:toggle:${key}`);
+    }
+    else {
+        kb.text('🟢 Enable', `phase:toggle:${key}`);
+    }
+    return kb;
+}
+// /setphase — show phase control panel
+zolaraBot.command('setphase', async (ctx) => {
+    const { project } = await resolveAdminProject(ctx.from.id);
+    if (!project) {
+        await ctx.reply('❌ Admin access required.');
+        return;
+    }
+    const flags = listRuntimeFlags();
+    const lines = Object.entries(flags).map(([key, value]) => {
+        const icon = value === 'active' ? '🟢' : '⚪';
+        return `${icon} *${key}* → ${value}`;
+    });
+    await ctx.reply(`🔧 *Phase Flags*\n\n${lines.join('\n')}\n\n` +
+        `Tap a phase to enable/disable it.`, {
+        parse_mode: 'Markdown',
+        reply_markup: buildPhaseKeyboard(flags),
+    });
+});
+// Alias
+zolaraBot.command('phase', async (ctx) => {
+    // Just redirect to /setphase
+    const { project } = await resolveAdminProject(ctx.from.id);
+    if (!project) {
+        await ctx.reply('❌ Admin access required.');
+        return;
+    }
+    const flags = listRuntimeFlags();
+    await ctx.reply('🔧 *Phase Flags*\n\nSelect a phase to manage:', {
+        parse_mode: 'Markdown',
+        reply_markup: buildPhaseKeyboard(flags),
+    });
 });
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 zolaraBot.on('callback_query:data', async (ctx) => {
@@ -310,6 +425,81 @@ zolaraBot.on('callback_query:data', async (ctx) => {
         catch (err) {
             console.error('[Reaction] Failed to store reaction:', err);
         }
+        return;
+    }
+    // Problem validation callbacks (Phase 2)
+    if (data.startsWith('validate:')) {
+        try {
+            const { parseValidationCallback, handleVoteCallback, handleTopicCallback } = await import('../engine/phases/phase-2-problem-def/telegram-ui');
+            const parsed = parseValidationCallback(data);
+            if (!parsed) {
+                await ctx.answerCallbackQuery('❌ Invalid callback');
+                return;
+            }
+            if (parsed.action === 'vote') {
+                const result = await handleVoteCallback(parsed.problemDefinitionId, parsed.vote, userId);
+                await ctx.answerCallbackQuery(result.text, { show_alert: result.alert });
+            }
+            else if (parsed.action === 'topic') {
+                const result = await handleTopicCallback(parsed.problemDefinitionId);
+                await ctx.answerCallbackQuery(result.text, { show_alert: result.alert });
+            }
+        }
+        catch (err) {
+            console.error('[Validation] Callback error:', err);
+            await ctx.answerCallbackQuery('❌ Error processing vote');
+        }
+        return;
+    }
+    // Phase flag control callbacks
+    if (data.startsWith('phase:')) {
+        // Verify admin
+        const { project } = await resolveAdminProject(userId);
+        if (!project) {
+            await ctx.answerCallbackQuery('❌ Admin access required.');
+            return;
+        }
+        const parts = data.split(':');
+        const action = parts[1];
+        if (action === 'refresh' || action === 'back') {
+            const flags = listRuntimeFlags();
+            await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(flags) });
+            await ctx.answerCallbackQuery('🔄 Refreshed');
+            return;
+        }
+        if (action === 'detail') {
+            const key = parts[2];
+            if (!key || !VALID_PHASES.includes(key)) {
+                await ctx.answerCallbackQuery('❌ Unknown phase');
+                return;
+            }
+            const flags = listRuntimeFlags();
+            const value = flags[key] ?? 'disabled';
+            await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseDetailKeyboard(key, value) });
+            await ctx.answerCallbackQuery(PHASE_SHORT[key] ?? key);
+            return;
+        }
+        if (action === 'toggle') {
+            const key = parts[2];
+            if (!key || !VALID_PHASES.includes(key)) {
+                await ctx.answerCallbackQuery('❌ Unknown phase');
+                return;
+            }
+            const flags = listRuntimeFlags();
+            const current = flags[key] ?? 'disabled';
+            const next = current === 'active' ? 'disabled' : 'active';
+            setRuntimeFlag(key, next);
+            const updatedFlags = listRuntimeFlags();
+            await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(updatedFlags) });
+            const label = PHASE_SHORT[key] ?? key;
+            await ctx.answerCallbackQuery(`✅ ${label} → ${next}`, { show_alert: true });
+            return;
+        }
+        if (action === 'noop') {
+            await ctx.answerCallbackQuery(' ');
+            return;
+        }
+        await ctx.answerCallbackQuery(' ');
         return;
     }
 });
@@ -485,6 +675,41 @@ zolaraBot.on('my_chat_member', async (ctx) => {
     await ctx.api.sendMessage(chat.id, `👋 *${groupTitle}* is now the report destination for *${projectName}*!\n\n` +
         `Round reports will be posted here when your admin starts a round.`, { parse_mode: 'Markdown' });
 });
+// ── Managed Bot Created (via deep link) ─────────────────────────────────────
+// Telegram sends a message with managed_bot_created: true when user approves
+// the bot creation in the BotFather UI
+zolaraBot.on('message:managed_bot_created', async (ctx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msg = ctx.update.message;
+    const managed = msg.managed_bot_created;
+    if (!managed?.bot?.is_bot)
+        return;
+    const botUser = managed.bot;
+    const adminTelegramId = ctx.from.id;
+    console.log(`[Zolara] Managed bot created: @${botUser.username} (ID: ${botUser.id}) by admin ${adminTelegramId}`);
+    try {
+        const { finalizeProjectBot } = await import('./managed-bots/creation');
+        const { botUsername, projectId } = await finalizeProjectBot(adminTelegramId, botUser.id, botUser.username);
+        // Get project name
+        const { projects } = await import('../data/schema/projects');
+        const { eq } = await import('drizzle-orm');
+        const { db } = await import('../data/db');
+        const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1);
+        const projectName = proj?.name ?? 'your project';
+        await ctx.reply(`🎉 Your project bot is live!\n\n` +
+            `Meet @${botUsername} — the dedicated bot for ${projectName}.\n\n` +
+            `Next steps:\n` +
+            `1️⃣ Add @${botUsername} to your project's group chat\n` +
+            `2️⃣ I'll automatically detect the group and set it as the report destination\n` +
+            `3️⃣ Share this invite link with your team members:\n` +
+            `👉 https://t.me/${botUsername}?start=claim_${projectId}\n\n` +
+            `Run /startround when your team is ready!`);
+    }
+    catch (err) {
+        console.error('[Zolara] Failed to finalize managed bot:', err);
+        await ctx.reply('⚠️ Bot created but setup failed. Contact support.');
+    }
+});
 // ── Text messages (non-command) ──────────────────────────────────────────────
 zolaraBot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
@@ -526,7 +751,7 @@ zolaraBot.on('message:text', async (ctx) => {
 });
 // ── Member Claim Flow ──────────────────────────────────────────────────────────
 async function handleMemberClaim(ctx, userId, projectId) {
-    const [project] = await db.select({ id: projects.id, name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    const [project] = await db.select({ id: projects.id, name: projects.name, config: projects.config }).from(projects).where(eq(projects.id, projectId)).limit(1);
     if (!project) {
         await ctx.reply('⚠️ This project link is invalid or has expired. Ask your admin for a new invite link.');
         return;
@@ -541,7 +766,9 @@ async function handleMemberClaim(ctx, userId, projectId) {
         await ctx.reply(`✅ You're already committed to *${project.name}*.\n\nA round will start soon. I'll DM you when it does.`, { parse_mode: 'Markdown' });
         return;
     }
-    const state = { phase: 'claim', projectId, projectName: project.name ?? 'this project', telegramId: userId, claimStartedAt: new Date().toISOString() };
+    const projectConfig = project.config ?? {};
+    const anonymity = projectConfig['anonymity'] ?? 'optional';
+    const state = { phase: 'claim', projectId, projectName: project.name ?? 'this project', telegramId: userId, claimStartedAt: new Date().toISOString(), anonymity };
     await saveClaimState(state);
     await handleClaimWelcome(ctx, state);
 }
@@ -614,7 +841,7 @@ export async function handleProjectBotUpdate(update, projectId, botToken) {
     // Import the project bot dynamically to avoid circular deps
     // The project bot is created fresh per-project using its own token
     const { createProjectBot } = await import('./managed-bots/bot-instance');
-    const botInstance = createProjectBot(botToken, projectId);
+    const botInstance = await createProjectBot(botToken, projectId);
     await botInstance.handleUpdate(update);
 }
 export async function startZolaraPolling() {

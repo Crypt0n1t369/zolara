@@ -12,13 +12,17 @@ import { eq } from 'drizzle-orm';
 const CLAIM_TTL = 86400; // 24 hours
 // ── Claim Welcome ─────────────────────────────────────────────────────────────
 export async function handleClaimWelcome(ctx, state) {
+    const anonNote = {
+        full: '• All responses are anonymized in the group report\n• Your teammates will never know what you personally said',
+        optional: '• Responses are anonymous unless you choose to be credited\n• Teammates won' + "'" + 't know who said what unless you opt in',
+        attributed: '• Your name is shown in the group report alongside your response\n• Teammates will know what you personally said',
+    }[state.anonymity] ?? '';
     await ctx.reply(`🏠 *${state.projectName}*\n\n` +
         `You're joining as a team member. Here's what that means:\n\n` +
         `📋 *Your commitment:*\n` +
         `• When a round starts, I'll DM you a question\n` +
         `• You reply with your honest perspective (~2 min)\n` +
-        `• All responses are anonymized in the group report\n` +
-        `• Your teammates will never know what you personally said\n\n` +
+        `${anonNote}\n\n` +
         `⚡ *No obligation* — skip a round if you're busy.\n\n` +
         `Ready to commit?`, {
         parse_mode: 'Markdown',

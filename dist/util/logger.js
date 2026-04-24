@@ -160,6 +160,7 @@ export const round = {
     stateTransitionFailed: (from, to, context, err) => error('round', 'STATE_TRANSITION_FAILED', `Failed to transition ${from} → ${to}`, context, err),
     insufficientResponses: (roundId, count, min, context) => warn('round', 'INSUFFICIENT_RESPONSES', `Round ${roundId}: ${count} responses (min ${min})`, context),
     memberUnreachable: (roundId, count, memberIds, context) => warn('round', 'MEMBER_UNREACHABLE', `Round ${roundId}: ${count} members cannot be reached (not started bot): ${memberIds}`, context),
+    validationComplete: (context) => info('round', 'VALIDATION_COMPLETE', 'Problem validation completed', context),
 };
 export const onboarding = {
     stepFailed: (step, context, err) => error('onboarding', 'STEP_FAILED', `Onboarding step '${step}' failed`, context, err),

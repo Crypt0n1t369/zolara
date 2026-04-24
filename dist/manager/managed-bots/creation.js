@@ -9,8 +9,8 @@ import { encrypt, hashToken, generateSecret } from '../../util/crypto';
 import { getManagedBotToken, setManagedBotWebhook, getManagedBotInfo, generateBotUsername, buildCreationLink, } from './lifecycle';
 import { config } from '../../config';
 import { redis } from '../../data/redis';
-// The manager bot's Telegram username (for creation links)
-const MANAGER_BOT_USERNAME = 'Zolara_builder_bot';
+// The manager bot's Telegram username (Zolara_bot is the managing bot that creates project bots)
+const MANAGER_BOT_USERNAME = 'Zolara_bot';
 /**
  * Build the bot creation link for a new project.
  * The admin clicks this link to create the managed bot in Telegram.
@@ -80,7 +80,7 @@ export async function createPendingProject(params) {
  * Finalize project creation after the managed bot is created.
  * Called when we receive the my_chat_member update from Telegram.
  */
-export async function finalizeProjectBot(adminTelegramId, botUserId) {
+export async function finalizeProjectBot(adminTelegramId, botUserId, suggestedUsername) {
     // First look up the admin by their telegram ID
     const [admin] = await db
         .select()

@@ -6,7 +6,7 @@ import { eq, desc } from 'drizzle-orm';
 import { db } from '../../data/db';
 import { projects, admins } from '../../data/schema/projects';
 import { encrypt, hashToken, generateSecret } from '../../util/crypto';
-import { getManagedBotToken, setManagedBotWebhook, getManagedBotInfo, generateBotUsername, buildCreationLink, } from './lifecycle';
+import { getManagedBotToken, setManagedBotWebhook, generateBotUsername, buildCreationLink, } from './lifecycle';
 import { config } from '../../config';
 import { redis } from '../../data/redis';
 // The Zolara bot's Telegram username (for creation links via BotFather)
@@ -86,7 +86,7 @@ export async function createPendingProject(params) {
  * Finalize project creation after the managed bot is created.
  * Called when we receive the my_chat_member update from Telegram.
  */
-export async function finalizeProjectBot(adminTelegramId, botUserId) {
+export async function finalizeProjectBot(adminTelegramId, botUserId, suggestedUsername) {
     // First look up the admin by their telegram ID
     const [admin] = await db
         .select()
@@ -134,10 +134,10 @@ export async function finalizeProjectBot(adminTelegramId, botUserId) {
     if (!updated[0]) {
         throw new Error('Failed to update project with bot info');
     }
-    // Get bot info for username
-    const botInfo = await getManagedBotInfo(botUserId);
+    // Bot username comes from the managed_bot_created event, not from API
+    // We can't call getManagedBotInfo reliably, so we accept it as param
     return {
         projectId: project.id,
-        botUsername: botInfo.username ?? 'unknown',
+        botUsername: suggestedUsername ?? 'unknown',
     };
 }

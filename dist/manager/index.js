@@ -98,7 +98,7 @@ managerBot.on('my_chat_member', async (ctx) => {
         const pending = JSON.parse(pendingData);
         // Finalize the project bot
         const { finalizeProjectBot } = await import('./managed-bots');
-        const { botUsername } = await finalizeProjectBot(adminTelegramId, botUser.id);
+        const { botUsername } = await finalizeProjectBot(adminTelegramId, botUser.id, botUser.username);
         // Notify the admin
         await ctx.api.sendMessage(adminTelegramId, `🎉 Your bot is live!\n\n` +
             `Meet @${botUsername} — your project's dedicated assistant.\n\n` +
@@ -112,6 +112,54 @@ managerBot.on('my_chat_member', async (ctx) => {
         await redis.del(`pending:${adminTelegramId}`);
         await redis.del(pending.pendingKey);
         console.log(`[Manager] Project ${pending.projectId} finalized with bot @${botUsername}`);
+    }
+    catch (err) {
+        managedLog.botInfoFailed(botUser.id, { telegramId: adminTelegramId }, err);
+    }
+});
+// Handle managed bot creation — this is fired when the bot creation deep link
+// is completed and Telegram creates the managed bot
+managerBot.on('managed_bot', async (ctx) => {
+    const managed = ctx.update.managed_bot;
+    if (!managed)
+        return;
+    console.log('[Manager] Received managed_bot update:', JSON.stringify(managed));
+    // managed can be ManagedBotCreated or ManagedBotUpdated
+    // For creation, we get ManagedBotCreated { bot: User }
+    const botUser = managed.bot;
+    if (!botUser?.is_bot)
+        return;
+    // Get admin ID from the message that initiated the creation
+    // The admin must have a pending project in Redis
+    const adminTelegramId = managed.user?.id;
+    if (!adminTelegramId) {
+        console.log('[Manager] No user info in managed_bot update');
+        return;
+    }
+    try {
+        const pendingData = await redis.get(`pending:${adminTelegramId}`);
+        if (!pendingData) {
+            console.log(`[Manager] No pending project for admin ${adminTelegramId}`);
+            // Try to find by checking pending keys more broadly
+            return;
+        }
+        const pending = JSON.parse(pendingData);
+        // Finalize the project bot
+        const { finalizeProjectBot } = await import('./managed-bots');
+        const { botUsername } = await finalizeProjectBot(adminTelegramId, botUser.id, botUser.username);
+        // Notify the admin
+        await ctx.api.sendMessage(adminTelegramId, `🎉 Your bot is live!\n\n` +
+            `Meet @${botUsername} — your project's dedicated assistant.\n\n` +
+            `Here's what to do next:\n\n` +
+            `1️⃣ Start a chat with @${botUsername}\n` +
+            `2️⃣ Add it to your group's chat\n` +
+            `3️⃣ Share this invitation link with your team:\n` +
+            `👉 https://t.me/${botUsername}?start=claim_${pending.projectId}\n\n` +
+            `Have a great deliberation! 🌀`);
+        await redis.del(`pending:${adminTelegramId}`);
+        if (pending.pendingKey)
+            await redis.del(pending.pendingKey);
+        console.log(`[Manager] Project ${pending.projectId} finalized via managed_bot @${botUsername}`);
     }
     catch (err) {
         managedLog.botInfoFailed(botUser.id, { telegramId: adminTelegramId }, err);

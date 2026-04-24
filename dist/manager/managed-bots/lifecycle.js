@@ -90,15 +90,17 @@ export async function getManagedBotInfo(botUserId) {
 }
 /**
  * Generate a suggested bot username from a project name.
- * Format: {project_name_slug}_zolara_bot
+ * Format: {project_name_slug}_zolara_{random4}
  */
 export function generateBotUsername(projectName) {
     const slug = projectName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_|_$/g, '')
-        .slice(0, 30); // Telegram limits bot usernames to 64 chars total, leave room for suffix
-    return `${slug}_zolara_bot`;
+        .slice(0, 22); // leave room for suffix
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const rand = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    return `${slug}_zol_${rand}`;
 }
 /**
  * Build the Telegram BotFather creation link for a new managed bot.

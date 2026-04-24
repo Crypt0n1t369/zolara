@@ -175,6 +175,7 @@ export async function finalizeProjectBot(
     .update(projects)
     .set({
       botTelegramId: botUserId,
+      botUsername: suggestedUsername ?? null,
       botTokenHash: tokenHash,
       botTokenEncrypted: encryptedToken,
       webhookSecret,

@@ -17,7 +17,7 @@ import { round as roundLog, db as dbLog, llm as llmLog, telegram as telegramLog,
  * Trigger a new round for a project.
  * Creates a SCHEDULED round that transitions to GATHERING immediately.
  */
-export async function triggerRound(projectId, topic) {
+export async function triggerRound(projectId, topic, options) {
     // Check no active round exists
     const activeRound = await db
         .select()
@@ -70,10 +70,11 @@ export async function triggerRound(projectId, topic) {
         deadline,
         memberCount: memberList.length,
         responseCount: 0,
+        anonymity: options?.anonymity ?? null,
     })
         .returning();
     // Transition to gathering (generate and send questions)
-    await transitionToGathering(round.id, projectId, nextRoundNumber, memberList, config);
+    await transitionToGathering(round.id, projectId, nextRoundNumber, memberList, config, options?.anonymity ?? null);
     return { roundId: round.id, status: round.status ?? 'unknown' };
 }
 /**
@@ -97,7 +98,7 @@ export async function cancelRound(roundId) {
         .where(eq(rounds.id, roundId));
 }
 // ── State Transitions ─────────────────────────────────────────────────────────
-async function transitionToGathering(roundId, projectId, roundNumber, memberList, config) {
+async function transitionToGathering(roundId, projectId, roundNumber, memberList, config, roundAnonymity) {
     const projectConfig = config;
     // Filter out members with invalid userIds
     const validMembers = memberList.filter((m) => m.userId !== null);
@@ -108,7 +109,7 @@ async function transitionToGathering(roundId, projectId, roundNumber, memberList
             projectId,
             topic: '', // Will be set by admin
             depth: projectConfig.questionDepth ?? 'medium',
-            anonymity: projectConfig.anonymity ?? 'optional',
+            anonymity: roundAnonymity ?? projectConfig.anonymity ?? 'optional',
             teamSizeRange: projectConfig.team_size_range ?? '2-5',
         });
     }
@@ -264,13 +265,17 @@ export async function processRoundCompletion(roundId, projectId) {
     // Run synthesis
     let reportData;
     try {
+        // Use round-level anonymity if set, otherwise fall back to project config
+        const effectiveAnonymity = round.anonymity
+            ?? project.config['anonymity']
+            ?? 'optional';
         const synthesisResult = await runSynthesis({
             roundId,
             projectId,
             topic: round.topic ?? 'General discussion',
             responseCount,
             memberCount: round.memberCount ?? 0,
-            anonymity: project.config['anonymity'] ?? 'optional',
+            anonymity: effectiveAnonymity,
         });
         reportData = synthesisResult;
         // Store report

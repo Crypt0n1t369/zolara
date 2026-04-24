@@ -38,6 +38,7 @@ export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
   adminId: bigint('admin_id', { mode: 'number' }).references(() => admins.id),
   botTelegramId: bigint('bot_telegram_id', { mode: 'number' }).unique(),
+  botUsername: text('bot_username'),
   botTokenHash: text('bot_token_hash'), // SHA hash of encrypted token for routing
   botTokenEncrypted: text('bot_token_encrypted'),
   webhookSecret: text('webhook_secret'),
