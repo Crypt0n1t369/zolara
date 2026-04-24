@@ -12,6 +12,10 @@ import {
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { subProblems } from './sub-problems';
+import { problemDefinitions, problemDefinitionVotes } from './problem-definitions';
+
+export { subProblems };
+export { problemDefinitions, problemDefinitionVotes };
 
 export const admins = pgTable('admins', {
   id: serial('id').primaryKey(),
@@ -127,6 +131,7 @@ export const rounds = pgTable('rounds', {
   errorMessage: text('error_message'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
   subProblemId: uuid('sub_problem_id').references(() => subProblems.id), // links round to a specific sub-problem
+  problemDefinitionId: uuid('problem_definition_id').references(() => problemDefinitions.id), // links round to its validation session
 }, (table) => ({
   projectIdx: index('rounds_project_idx').on(table.projectId),
   statusIdx: index('rounds_status_idx').on(table.status),

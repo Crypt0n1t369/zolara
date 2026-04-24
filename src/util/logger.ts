@@ -271,6 +271,9 @@ export const round = {
 
   memberUnreachable: (roundId: string, count: number, memberIds: string, context?: LogContext) =>
     warn('round', 'MEMBER_UNREACHABLE', `Round ${roundId}: ${count} members cannot be reached (not started bot): ${memberIds}`, context),
+
+  validationComplete: (context: Record<string, unknown>) =>
+    info('round', 'VALIDATION_COMPLETE', 'Problem validation completed', context),
 };
 
 export const onboarding = {

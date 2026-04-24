@@ -1,0 +1,459 @@
+/**
+ * Phase 2 — Problem Validation Gate
+ *
+ * Entry point: validateAndTriggerRound()
+ * Replaces triggerRound() when PHASE_PROBLEM_DEF='active'
+ *
+ * Flow:
+ * 1. validateAndTriggerRound(topic) → creates problem_definition (status: voting)
+ * 2. Members receive DM with inline vote keyboard
+ * 3. Each vote → processVote() records it
+ * 4. After threshold reached OR deadline passed → tallyVotes()
+ * 5. Result → confirmed / needs_work / rejected
+ * 6. If confirmed → transition round to gathering (normal flow)
+ * 7. If needs_work → clarifying questions, re-run validation
+ * 8. If rejected → admin notified, no round started
+ *
+ * Phase flag: PHASE_PROBLEM_DEF (default 'disabled')
+ */
+
+import { eq, and, desc, gte } from 'drizzle-orm';
+import { db } from '../../../data/db';
+import {
+  rounds,
+  projects,
+  members,
+  problemDefinitions,
+  problemDefinitionVotes,
+} from '../../../data/schema/projects';
+import { isPhaseActive, PHASE_PROBLEM_DEF } from '../flags';
+import { triggerRound } from '../../round-manager';
+import { sendValidationDM } from './telegram-ui';
+import { llm } from '../../llm/minimax';
+import { round as roundLog } from '../../../util/logger';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const VOTE_DEADLINE_HOURS = 24; // hours to wait for votes before tallying
+const CONFIRM_THRESHOLD = 0.5;  // % of members that must vote 'clear' to confirm
+const LOW_CONFIDENCE_THRESHOLD = 40; // confidence score below this → flag admin
+
+// ── Types ───────────────────────────────────────────────────────────────────────
+
+export interface ValidationResult {
+  status: 'confirmed' | 'needs_work' | 'rejected';
+  problemDefinitionId: string;
+  roundId?: string;
+  confidenceScore: number;
+  voteSummary: {
+    clear: number;
+    refine: number;
+    unsure: number;
+    total: number;
+  };
+}
+
+export interface ValidationSession {
+  id: string;
+  projectId: string;
+  topicText: string;
+  status: string;
+  votesReceived: number;
+  totalVoters: number;
+}
+
+// ── Main entry point ───────────────────────────────────────────────────────────
+
+/**
+ * Phase 2 replacement for triggerRound().
+ * Returns the roundId if validation passed and round was started.
+ * Returns { roundId: null, problemDefinitionId: '...', status: 'pending' } if still validating.
+ */
+export async function validateAndTriggerRound(
+  projectId: string,
+  topic: string,
+  options?: {
+    anonymity?: 'full' | 'optional' | 'attributed';
+  }
+): Promise<{
+  roundId: string | null;
+  problemDefinitionId: string | null;
+  validationStatus: string | null;
+  message: string;
+}> {
+  // ── Step 1: Check phase flag ──────────────────────────────────────────────
+  if (!isPhaseActive(PHASE_PROBLEM_DEF)) {
+    // Fallback to baseline flow (Phase 0/1 behavior)
+    const result = await triggerRound(projectId, topic, options);
+    return {
+      roundId: result.roundId,
+      problemDefinitionId: null,
+      validationStatus: null,
+      message: 'Problem validation disabled — round started directly',
+    };
+  }
+
+  // ── Step 2: Check for existing validation in progress ───────────────────
+  const existingValidation = await db
+    .select()
+    .from(problemDefinitions)
+    .where(
+      and(
+        eq(problemDefinitions.projectId, projectId),
+        eq(problemDefinitions.status, 'pending')
+      )
+    )
+    .limit(1);
+
+  if (existingValidation.length > 0) {
+    return {
+      roundId: null,
+      problemDefinitionId: existingValidation[0].id,
+      validationStatus: 'pending',
+      message: 'A validation is already in progress for this project',
+    };
+  }
+
+  // ── Step 3: Create validation session ────────────────────────────────────
+  const memberList = await db
+    .select()
+    .from(members)
+    .where(eq(members.projectId, projectId))
+    .limit(100);
+
+  if (memberList.length < 2) {
+    return {
+      roundId: null,
+      problemDefinitionId: null,
+      validationStatus: null,
+      message: 'Need at least 2 members to start a validation',
+    };
+  }
+
+  const voteDeadline = new Date(Date.now() + VOTE_DEADLINE_HOURS * 60 * 60 * 1000);
+
+  // Create the round in 'scheduled' status (not gathering yet)
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  const existingRounds = await db
+    .select({ roundNumber: rounds.roundNumber })
+    .from(rounds)
+    .where(eq(rounds.projectId, projectId))
+    .orderBy(desc(rounds.roundNumber))
+    .limit(1);
+
+  const nextRoundNumber = (existingRounds[0]?.roundNumber ?? 0) + 1;
+
+  const [problemDefinition] = await db
+    .insert(problemDefinitions)
+    .values({
+      projectId,
+      roundId: null, // set after confirmation
+      topicText: topic,
+      status: 'voting',
+      voteDeadline,
+      votesReceived: 0,
+      totalVoters: memberList.length,
+    })
+    .returning();
+
+  const [round] = await db
+    .insert(rounds)
+    .values({
+      projectId,
+      roundNumber: nextRoundNumber,
+      topic,
+      status: 'scheduled', // waiting for validation
+      startedAt: new Date(),
+      deadline: voteDeadline,
+      memberCount: memberList.length,
+      responseCount: 0,
+      problemDefinitionId: problemDefinition.id,
+      anonymity: options?.anonymity ?? null,
+    })
+    .returning();
+
+  // Link round to problem definition
+  await db
+    .update(problemDefinitions)
+    .set({ roundId: round.id })
+    .where(eq(problemDefinitions.id, problemDefinition.id));
+
+  // ── Step 4: Send validation DMs to all members ─────────────────────────────
+  const voterList = memberList
+    .filter((m) => m.userId != null)
+    .map((m) => ({ userId: m.userId as number }));
+  await sendValidationDM(round.id, projectId, topic, voterList);
+
+  return {
+    roundId: null, // not started yet — waiting for validation
+    problemDefinitionId: problemDefinition.id,
+    validationStatus: 'voting',
+    message: `Validation started for "${topic}". Voting open for ${VOTE_DEADLINE_HOURS}h.`,
+  };
+}
+
+// ── Process a member's vote ─────────────────────────────────────────────────────
+
+/**
+ * Called when a member casts a vote from their DM.
+ * Records the vote and checks if threshold reached.
+ */
+export async function processVote(
+  problemDefinitionId: string,
+  memberId: number,
+  vote: 'clear' | 'refine' | 'unsure',
+  voteText?: string
+): Promise<{ recorded: boolean; tallyComplete: boolean; result?: ValidationResult }> {
+  // Check if already voted
+  const existingVote = await db
+    .select()
+    .from(problemDefinitionVotes)
+    .where(
+      and(
+        eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId),
+        eq(problemDefinitionVotes.memberId, memberId)
+      )
+    )
+    .limit(1);
+
+  if (existingVote.length > 0) {
+    // Update existing vote
+    await db
+      .update(problemDefinitionVotes)
+      .set({ vote, voteText: voteText ?? null, votedAt: new Date() })
+      .where(eq(problemDefinitionVotes.id, existingVote[0].id));
+  } else {
+    // Insert new vote
+    await db
+      .insert(problemDefinitionVotes)
+      .values({ problemDefinitionId, memberId, vote, voteText: voteText ?? null });
+  }
+
+  // Update votes received count
+  const votes = await db
+    .select()
+    .from(problemDefinitionVotes)
+    .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
+    .limit(100);
+
+  await db
+    .update(problemDefinitions)
+    .set({ votesReceived: votes.length, updatedAt: new Date() })
+    .where(eq(problemDefinitions.id, problemDefinitionId));
+
+  // Check if we should tally
+  const [def] = await db
+    .select()
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.id, problemDefinitionId))
+    .limit(1);
+
+  if (!def) throw new Error('Problem definition not found');
+
+  const participationRate = def.totalVoters ? votes.length / def.totalVoters : 0;
+
+  // Tally if: deadline passed OR >50% participation
+  const deadlineReached = def.voteDeadline && def.voteDeadline <= new Date();
+  const thresholdReached = participationRate >= 0.5;
+
+  if (deadlineReached || thresholdReached) {
+    const result = await tallyVotes(problemDefinitionId);
+    return { recorded: true, tallyComplete: true, result };
+  }
+
+  return { recorded: true, tallyComplete: false, result: undefined };
+}
+
+// ── Tally votes ───────────────────────────────────────────────────────────────
+
+/**
+ * Compute vote result for a problem definition.
+ * Returns confidence score and final status.
+ */
+export async function tallyVotes(problemDefinitionId: string): Promise<ValidationResult> {
+  const [def] = await db
+    .select()
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.id, problemDefinitionId))
+    .limit(1);
+
+  if (!def) throw new Error('Problem definition not found');
+
+  const votes = await db
+    .select()
+    .from(problemDefinitionVotes)
+    .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
+    .limit(100);
+
+  const voteSummary = {
+    clear: votes.filter((v) => v.vote === 'clear').length,
+    refine: votes.filter((v) => v.vote === 'refine').length,
+    unsure: votes.filter((v) => v.vote === 'unsure').length,
+    total: votes.length,
+  };
+
+  // Confidence: weighted score
+  // clear=100, unsure=50, refine=0
+  const totalScore =
+    voteSummary.clear * 100 + voteSummary.unsure * 50 + voteSummary.refine * 0;
+  const confidenceScore =
+    voteSummary.total > 0
+      ? Math.round(totalScore / voteSummary.total)
+      : 0;
+
+  // Determine outcome
+  let status: 'confirmed' | 'needs_work' | 'rejected';
+
+  const clearRate =
+    voteSummary.total > 0 ? voteSummary.clear / voteSummary.total : 0;
+
+  if (clearRate >= CONFIRM_THRESHOLD && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
+    status = 'confirmed';
+  } else if (voteSummary.refine > 0 || confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
+    status = 'needs_work';
+  } else {
+    status = 'needs_work'; // default to needing clarification
+  }
+
+  // Update problem definition
+  await db
+    .update(problemDefinitions)
+    .set({
+      status,
+      confidenceScore,
+      updatedAt: new Date(),
+    })
+    .where(eq(problemDefinitions.id, problemDefinitionId));
+
+  // If confirmed → start the round
+  let roundId: string | undefined;
+  if (status === 'confirmed' && def.roundId) {
+    await db
+      .update(rounds)
+      .set({ status: 'gathering' })
+      .where(eq(rounds.id, def.roundId));
+    roundId = def.roundId;
+  }
+
+  roundLog.validationComplete({
+    problemDefinitionId,
+    status,
+    confidenceScore,
+    voteSummary,
+  });
+
+  return {
+    status,
+    problemDefinitionId,
+    roundId,
+    confidenceScore,
+    voteSummary,
+  };
+}
+
+// ── Handle needs_work → clarification round ──────────────────────────────────
+
+/**
+ * Generate clarifying questions for a problem that needs work.
+ * Then send them to the group and re-run validation.
+ */
+export async function runClarification(
+  problemDefinitionId: string
+): Promise<{ questions: string[]; revalidated: boolean }> {
+  const [def] = await db
+    .select()
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.id, problemDefinitionId))
+    .limit(1);
+
+  if (!def) throw new Error('Problem definition not found');
+
+  // Generate clarification questions via LLM
+  const clarificationPrompt = `The following topic needs clarification before a team can explore it:
+"${def.topicText}"
+
+${voteSummaryText(await db
+  .select()
+  .from(problemDefinitionVotes)
+  .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
+  .limit(100))}
+
+Generate 2-3 specific clarifying questions that would help the team define this problem more clearly.
+Output as JSON: { "questions": ["question 1", "question 2", "question 3"] }`;
+
+  let questions: string[] = [];
+  try {
+    const result = await llm.generate({
+      systemPrompt:
+        'You are a helpful assistant that generates clarifying questions. Output JSON only.',
+      userPrompt: clarificationPrompt,
+      temperature: 0.5,
+      maxTokens: 512,
+      responseFormat: 'json',
+    });
+    questions = (result.parsed as { questions: string[] }).questions ?? [];
+  } catch {
+    questions = [
+      'What is the core issue you are trying to solve?',
+      'Who is affected and how?',
+      'What would a successful outcome look like?',
+    ];
+  }
+
+  // Increment clarification round
+  await db
+    .update(problemDefinitions)
+    .set({
+      clarificationRound: (def.clarificationRound ?? 0) + 1,
+      status: 'voting',
+      votesReceived: 0,
+      updatedAt: new Date(),
+    })
+    .where(eq(problemDefinitions.id, problemDefinitionId));
+
+  return { questions, revalidated: true };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+async function voteSummaryText(votes: { vote: string }[]): Promise<string> {
+  const clear = votes.filter((v) => v.vote === 'clear').length;
+  const refine = votes.filter((v) => v.vote === 'refine').length;
+  const unsure = votes.filter((v) => v.vote === 'unsure').length;
+  return `Vote summary: ${clear} clear, ${refine} refine, ${unsure} unsure`;
+}
+
+/**
+ * Check all problem definitions with voting status and tally those past deadline.
+ * Called by cron job.
+ */
+export async function checkValidationDeadlines(): Promise<void> {
+  const now = new Date();
+
+  const expiredValidations = await db
+    .select()
+    .from(problemDefinitions)
+    .where(
+      and(
+        eq(problemDefinitions.status, 'voting'),
+        gte(problemDefinitions.voteDeadline, now) // intentionally gte to catch past ones
+      )
+    )
+    .limit(100);
+
+  // Filter for actually expired ones
+  for (const def of expiredValidations) {
+    if (def.voteDeadline && def.voteDeadline <= now) {
+      try {
+        await tallyVotes(def.id);
+      } catch (err) {
+        roundLog.deadlineCheckFailed({ problemDefinitionId: def.id }, err);
+      }
+    }
+  }
+}
