@@ -6,7 +6,7 @@
  * Member flow: /start claim_xxx → commitment → onboarding → question answering
  */
 
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { config } from '../config';
 import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
@@ -343,78 +343,89 @@ const VALID_PHASES = [
   'PHASE_AUTO_UPDATE',
 ];
 
-const PHASE_DESCRIPTIONS: Record<string, string> = {
-  PHASE_SUB_PROBLEMS: 'Sub-problem infrastructure (tables + round linkage)',
-  PHASE_PROBLEM_DEF: 'Problem validation gate before exploration',
-  PHASE_CROSS_LINK: 'Cross-linking responses during gathering',
-  PHASE_ITERATION: 'Iteration loop post-exploration',
-  PHASE_RICH_SYNTHESIS: 'Richer synthesis output',
-  PHASE_MEETING_PREP: 'Meeting preparation brief',
-  PHASE_MEETING: 'Meeting transcript integration',
-  PHASE_AUTO_UPDATE: 'Auto-update project map post-meeting',
+const PHASE_SHORT: Record<string, string> = {
+  PHASE_SUB_PROBLEMS: '🗂 Sub-problems',
+  PHASE_PROBLEM_DEF: '🗳 Problem Validation',
+  PHASE_CROSS_LINK: '🔗 Cross-linking',
+  PHASE_ITERATION: '🔄 Iteration',
+  PHASE_RICH_SYNTHESIS: '📊 Rich Synthesis',
+  PHASE_MEETING_PREP: '📋 Meeting Prep',
+  PHASE_MEETING: '🗓 Meeting',
+  PHASE_AUTO_UPDATE: '🔁 Auto-update',
 };
 
+/**
+ * Build the phase status inline keyboard.
+ * Each phase: [short name] [🟢 ON] or [⚪ OFF]
+ */
+function buildPhaseKeyboard(flags: Record<string, string>): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const key of VALID_PHASES) {
+    const value = flags[key] ?? 'disabled';
+    const toggleLabel = value === 'active' ? '🟢 ON' : '⚪ OFF';
+    kb.text(PHASE_SHORT[key] ?? key, `phase:detail:${key}`).text(toggleLabel, `phase:toggle:${key}`).row();
+  }
+  kb.row().text('🔄 Refresh', 'phase:refresh');
+  return kb;
+}
+
+/**
+ * Build detail keyboard for a single phase.
+ * Shows: [🔙 Back] [🟢 Enable] / [⚪ Disable]
+ */
+function buildPhaseDetailKeyboard(key: string, currentValue: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const descriptions: Record<string, string> = {
+    PHASE_SUB_PROBLEMS: 'Sub-problem infrastructure (tables + round linkage)',
+    PHASE_PROBLEM_DEF: 'Problem validation gate before exploration',
+    PHASE_CROSS_LINK: 'Cross-linking responses during gathering',
+    PHASE_ITERATION: 'Iteration loop post-exploration',
+    PHASE_RICH_SYNTHESIS: 'Richer synthesis output',
+    PHASE_MEETING_PREP: 'Meeting preparation brief',
+    PHASE_MEETING: 'Meeting transcript integration',
+    PHASE_AUTO_UPDATE: 'Auto-update project map post-meeting',
+  };
+  kb.text(`ℹ️ ${descriptions[key] ?? key}`, 'phase:noop').row();
+  kb.text('🔙 Back to all phases', 'phase:back').row();
+  if (currentValue === 'active') {
+    kb.text('⚪ Disable', `phase:toggle:${key}`);
+  } else {
+    kb.text('🟢 Enable', `phase:toggle:${key}`);
+  }
+  return kb;
+}
+
+// /setphase — show phase control panel
 zolaraBot.command('setphase', async (ctx) => {
-  // Verify admin via existing helper
   const { project } = await resolveAdminProject(ctx.from!.id);
-  if (!project) {
-    await ctx.reply('❌ Admin access required.');
-    return;
-  }
+  if (!project) { await ctx.reply('❌ Admin access required.'); return; }
 
-  const args = (ctx.match as string).trim();
-
-  // /setphase — show current status
-  if (!args) {
-    const flags = listRuntimeFlags();
-    const lines = Object.entries(flags).map(([key, value]) => {
-      const desc = PHASE_DESCRIPTIONS[key] ?? key;
-      const icon = value === 'active' ? '🟢' : '⚪';
-      return `${icon} *${key}*\n   ${desc}\n   → ${value}`;
-    });
-    await ctx.reply(
-      `🔧 *Phase Flags*\n\n${lines.join('\n\n')}\n\n` +
-      `To change a flag:\n` +
-      `/setphase PHASE_PROBLEM_DEF=active`,
-      { parse_mode: 'Markdown' }
-    );
-    return;
-  }
-
-  // /setphase KEY=value
-  const eqIdx = args.indexOf('=');
-  if (eqIdx < 0) {
-    await ctx.reply(
-      '❌ Invalid format. Use:\n' +
-      '/setphase PHASE_PROBLEM_DEF=active\n' +
-      '/setphase PHASE_PROBLEM_DEF=disabled\n' +
-      '/setphase (to see current status)',
-      { parse_mode: 'Markdown' }
-    );
-    return;
-  }
-
-  const key = args.slice(0, eqIdx).trim().toUpperCase();
-  const value = args.slice(eqIdx + 1).trim().toLowerCase();
-
-  if (!VALID_PHASES.includes(key)) {
-    await ctx.reply(`❌ Unknown flag: ${key}\n\nValid flags:\n${VALID_PHASES.join(', ')}`);
-    return;
-  }
-
-  if (value !== 'active' && value !== 'disabled') {
-    await ctx.reply('❌ Value must be: active or disabled');
-    return;
-  }
-
-  setRuntimeFlag(key, value);
+  const flags = listRuntimeFlags();
+  const lines = Object.entries(flags).map(([key, value]) => {
+    const icon = value === 'active' ? '🟢' : '⚪';
+    return `${icon} *${key}* → ${value}`;
+  });
 
   await ctx.reply(
-    `✅ *${key}* set to *${value}*\n\n` +
-    `This takes effect immediately. ` +
-    `Run /setphase to verify.`,
-    { parse_mode: 'Markdown' }
+    `🔧 *Phase Flags*\n\n${lines.join('\n')}\n\n` +
+    `Tap a phase to enable/disable it.`,
+    {
+      parse_mode: 'Markdown' as const,
+      reply_markup: buildPhaseKeyboard(flags),
+    }
   );
+});
+
+// Alias
+zolaraBot.command('phase', async (ctx) => {
+  // Just redirect to /setphase
+  const { project } = await resolveAdminProject(ctx.from!.id);
+  if (!project) { await ctx.reply('❌ Admin access required.'); return; }
+  const flags = listRuntimeFlags();
+  await ctx.reply('🔧 *Phase Flags*\n\nSelect a phase to manage:', {
+    parse_mode: 'Markdown',
+    reply_markup: buildPhaseKeyboard(flags),
+  });
 });
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
@@ -526,6 +537,55 @@ zolaraBot.on('callback_query:data', async (ctx) => {
       console.error('[Validation] Callback error:', err);
       await ctx.answerCallbackQuery('❌ Error processing vote');
     }
+    return;
+  }
+
+  // Phase flag control callbacks
+  if (data.startsWith('phase:')) {
+    // Verify admin
+    const { project } = await resolveAdminProject(userId);
+    if (!project) { await ctx.answerCallbackQuery('❌ Admin access required.'); return; }
+
+    const parts = data.split(':');
+    const action = parts[1];
+
+    if (action === 'refresh' || action === 'back') {
+      const flags = listRuntimeFlags();
+      await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(flags) });
+      await ctx.answerCallbackQuery('🔄 Refreshed');
+      return;
+    }
+
+    if (action === 'detail') {
+      const key = parts[2];
+      if (!key || !VALID_PHASES.includes(key)) { await ctx.answerCallbackQuery('❌ Unknown phase'); return; }
+      const flags = listRuntimeFlags();
+      const value = flags[key] ?? 'disabled';
+      await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseDetailKeyboard(key, value) });
+      await ctx.answerCallbackQuery(PHASE_SHORT[key] ?? key);
+      return;
+    }
+
+    if (action === 'toggle') {
+      const key = parts[2];
+      if (!key || !VALID_PHASES.includes(key)) { await ctx.answerCallbackQuery('❌ Unknown phase'); return; }
+      const flags = listRuntimeFlags();
+      const current = flags[key] ?? 'disabled';
+      const next = current === 'active' ? 'disabled' : 'active';
+      setRuntimeFlag(key, next);
+      const updatedFlags = listRuntimeFlags();
+      await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(updatedFlags) });
+      const label = PHASE_SHORT[key] ?? key;
+      await ctx.answerCallbackQuery(`✅ ${label} → ${next}`, { show_alert: true } as any);
+      return;
+    }
+
+    if (action === 'noop') {
+      await ctx.answerCallbackQuery(' ');
+      return;
+    }
+
+    await ctx.answerCallbackQuery(' ');
     return;
   }
 });
