@@ -17,6 +17,7 @@ import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
 import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
 import { isPhaseActive } from '../engine/phases/flags';
+import { setRuntimeFlag, listRuntimeFlags } from '../util/runtime-flags';
 import {
   handleAddAdminCommand,
   handleRemoveAdminCommand,
@@ -327,6 +328,93 @@ zolaraBot.command('admins', async (ctx) => {
 
 zolaraBot.command('settings', async (ctx) => {
   await handleSettingsCommand(ctx);
+});
+
+// ── Phase flag control (admin only) ──────────────────────────────────────────
+
+const VALID_PHASES = [
+  'PHASE_SUB_PROBLEMS',
+  'PHASE_PROBLEM_DEF',
+  'PHASE_CROSS_LINK',
+  'PHASE_ITERATION',
+  'PHASE_RICH_SYNTHESIS',
+  'PHASE_MEETING_PREP',
+  'PHASE_MEETING',
+  'PHASE_AUTO_UPDATE',
+];
+
+const PHASE_DESCRIPTIONS: Record<string, string> = {
+  PHASE_SUB_PROBLEMS: 'Sub-problem infrastructure (tables + round linkage)',
+  PHASE_PROBLEM_DEF: 'Problem validation gate before exploration',
+  PHASE_CROSS_LINK: 'Cross-linking responses during gathering',
+  PHASE_ITERATION: 'Iteration loop post-exploration',
+  PHASE_RICH_SYNTHESIS: 'Richer synthesis output',
+  PHASE_MEETING_PREP: 'Meeting preparation brief',
+  PHASE_MEETING: 'Meeting transcript integration',
+  PHASE_AUTO_UPDATE: 'Auto-update project map post-meeting',
+};
+
+zolaraBot.command('setphase', async (ctx) => {
+  // Verify admin via existing helper
+  const { project } = await resolveAdminProject(ctx.from!.id);
+  if (!project) {
+    await ctx.reply('❌ Admin access required.');
+    return;
+  }
+
+  const args = (ctx.match as string).trim();
+
+  // /setphase — show current status
+  if (!args) {
+    const flags = listRuntimeFlags();
+    const lines = Object.entries(flags).map(([key, value]) => {
+      const desc = PHASE_DESCRIPTIONS[key] ?? key;
+      const icon = value === 'active' ? '🟢' : '⚪';
+      return `${icon} *${key}*\n   ${desc}\n   → ${value}`;
+    });
+    await ctx.reply(
+      `🔧 *Phase Flags*\n\n${lines.join('\n\n')}\n\n` +
+      `To change a flag:\n` +
+      `/setphase PHASE_PROBLEM_DEF=active`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  // /setphase KEY=value
+  const eqIdx = args.indexOf('=');
+  if (eqIdx < 0) {
+    await ctx.reply(
+      '❌ Invalid format. Use:\n' +
+      '/setphase PHASE_PROBLEM_DEF=active\n' +
+      '/setphase PHASE_PROBLEM_DEF=disabled\n' +
+      '/setphase (to see current status)',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  const key = args.slice(0, eqIdx).trim().toUpperCase();
+  const value = args.slice(eqIdx + 1).trim().toLowerCase();
+
+  if (!VALID_PHASES.includes(key)) {
+    await ctx.reply(`❌ Unknown flag: ${key}\n\nValid flags:\n${VALID_PHASES.join(', ')}`);
+    return;
+  }
+
+  if (value !== 'active' && value !== 'disabled') {
+    await ctx.reply('❌ Value must be: active or disabled');
+    return;
+  }
+
+  setRuntimeFlag(key, value);
+
+  await ctx.reply(
+    `✅ *${key}* set to *${value}*\n\n` +
+    `This takes effect immediately. ` +
+    `Run /setphase to verify.`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────

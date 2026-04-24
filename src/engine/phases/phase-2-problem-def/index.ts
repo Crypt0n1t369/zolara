@@ -26,7 +26,7 @@ import {
   problemDefinitions,
   problemDefinitionVotes,
 } from '../../../data/schema/projects';
-import { isPhaseActive, PHASE_PROBLEM_DEF } from '../flags';
+import { isPhaseActive } from '../flags';
 import { triggerRound } from '../../round-manager';
 import { sendValidationDM } from './telegram-ui';
 import { llm } from '../../llm/minimax';
@@ -82,7 +82,7 @@ export async function validateAndTriggerRound(
   message: string;
 }> {
   // ── Step 1: Check phase flag ──────────────────────────────────────────────
-  if (!isPhaseActive(PHASE_PROBLEM_DEF)) {
+  if (!isPhaseActive('PHASE_PROBLEM_DEF')) {
     // Fallback to baseline flow (Phase 0/1 behavior)
     const result = await triggerRound(projectId, topic, options);
     return {
