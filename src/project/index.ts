@@ -15,6 +15,8 @@ import { projects, admins, members, rounds } from '../data/schema/projects';
 import { eq, desc, and } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
+import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
+import { isPhaseActive } from '../engine/phases/flags';
 import {
   handleAddAdminCommand,
   handleRemoveAdminCommand,
@@ -195,11 +197,31 @@ zolaraBot.command('startround', async (ctx) => {
   const topic = (ctx.match as string).trim() || 'General check-in';
 
   try {
-    const { roundId } = await triggerRound(project.id, topic);
-    await ctx.reply(
-      `🎯 *Round started!*\n\nProject: *${project.name}*\nTopic: ${topic}\nRound ID: ${roundId.slice(0, 8)}...\n\nCommitted members are being sent questions via DM.`,
-      { parse_mode: 'Markdown' }
-    );
+    // Use Phase 2 validation flow if flag is active, otherwise fall back to baseline
+    if (isPhaseActive('PHASE_PROBLEM_DEF')) {
+      const result = await validateAndTriggerRound(project.id, topic);
+      if (result.validationStatus === 'voting') {
+        await ctx.reply(
+          `🗳 *Validation started for "${topic}"*
+
+` +
+          `Your team is being asked to confirm the topic is clearly defined before we explore it.
+` +
+          `Voting open for 24h. You'll be notified when the vote completes.\n\n` +
+          `Problem Definition ID: ${result.problemDefinitionId?.slice(0, 8)}...`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        await ctx.reply(result.message);
+      }
+    } else {
+      const { roundId } = await triggerRound(project.id, topic);
+      await ctx.reply(
+        `🎯 *Round started!*\n\nProject: *${project.name}*\nTopic: ${topic}\nRound ID: ${roundId.slice(0, 8)}...\n\n` +
+        `Committed members are being sent questions via DM.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
   } catch (err) {
     await ctx.reply(`⚠️ Could not start round: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -389,6 +411,32 @@ zolaraBot.on('callback_query:data', async (ctx) => {
       }
     } catch (err) {
       console.error('[Reaction] Failed to store reaction:', err);
+    }
+    return;
+  }
+
+  // Problem validation callbacks (Phase 2)
+  if (data.startsWith('validate:')) {
+    try {
+      const { parseValidationCallback, handleVoteCallback, handleTopicCallback } =
+        await import('../engine/phases/phase-2-problem-def/telegram-ui');
+
+      const parsed = parseValidationCallback(data);
+      if (!parsed) {
+        await ctx.answerCallbackQuery('❌ Invalid callback');
+        return;
+      }
+
+      if (parsed.action === 'vote') {
+        const result = await handleVoteCallback(parsed.problemDefinitionId, parsed.vote!, userId);
+        await ctx.answerCallbackQuery(result.text, { show_alert: result.alert } as any);
+      } else if (parsed.action === 'topic') {
+        const result = await handleTopicCallback(parsed.problemDefinitionId);
+        await ctx.answerCallbackQuery(result.text, { show_alert: result.alert } as any);
+      }
+    } catch (err) {
+      console.error('[Validation] Callback error:', err);
+      await ctx.answerCallbackQuery('❌ Error processing vote');
     }
     return;
   }

@@ -187,7 +187,7 @@ export async function validateAndTriggerRound(
   const voterList = memberList
     .filter((m) => m.userId != null)
     .map((m) => ({ userId: m.userId as number }));
-  await sendValidationDM(round.id, projectId, topic, voterList);
+  await sendValidationDM(problemDefinition.id, projectId, topic, voterList);
 
   return {
     roundId: null, // not started yet — waiting for validation

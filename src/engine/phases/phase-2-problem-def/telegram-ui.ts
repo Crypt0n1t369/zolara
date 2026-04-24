@@ -4,14 +4,12 @@
  * Sends validation DMs with inline keyboard voting.
  * Handles vote callback queries.
  *
- * Keyboards:
- * - Validation: [✅ Clear] [⚠️ Refine] [❓ Not sure]
- * - Vote with reason: (after selecting, optional text input)
+ * Keyboard format: validate:vote:{problemDefinitionId}:{vote}|validate:topic:{problemDefinitionId}
  */
 
 import { InlineKeyboard } from 'grammy';
 import { db } from '../../../data/db';
-import { members } from '../../../data/schema/projects';
+import { members, problemDefinitions } from '../../../data/schema/projects';
 import { sendMessage } from '../../../util/telegram-sender';
 import { eq } from 'drizzle-orm';
 import { processVote } from './index';
@@ -21,12 +19,12 @@ import { processVote } from './index';
  * Includes: topic, context, and inline vote keyboard.
  */
 export async function sendValidationDM(
-  roundId: string,
+  problemDefinitionId: string,
   projectId: string,
   topic: string,
   memberList: { userId: number }[]
 ): Promise<void> {
-  const keyboard = buildValidationKeyboard(roundId);
+  const keyboard = buildValidationKeyboard('__PLACEHOLDER__'); // real IDs per member below
 
   const message =
     `🗳 *Topic Validation Required*\n\n` +
@@ -41,12 +39,12 @@ export async function sendValidationDM(
 
   for (const member of memberList) {
     try {
+      const kbd = buildValidationKeyboard(problemDefinitionId);
       await sendMessage(member.userId, message, {
         parseMode: 'Markdown',
-        replyMarkup: keyboard,
+        replyMarkup: kbd,
       }, projectId);
     } catch (err) {
-      // Member may have blocked the bot — skip
       console.warn(`Failed to send validation DM to ${member.userId}:`, err);
     }
   }
@@ -54,79 +52,107 @@ export async function sendValidationDM(
 
 /**
  * Build the validation vote keyboard.
- * callback_data encodes: vote action + problem_definition_id
+ * callback_data format: validate:vote:{problemDefinitionId}:{vote}
  */
-function buildValidationKeyboard(problemDefinitionId: string): InlineKeyboard {
+export function buildValidationKeyboard(problemDefinitionId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text(
-      '✅ Clear',
-      JSON.stringify({ a: 'vote', id: problemDefinitionId, v: 'clear' })
-    )
-    .text(
-      '⚠️ Refine',
-      JSON.stringify({ a: 'vote', id: problemDefinitionId, v: 'refine' })
-    )
-    .text(
-      '❓ Not sure',
-      JSON.stringify({ a: 'vote', id: problemDefinitionId, v: 'unsure' })
-    )
+    .text('✅ Clear', `validate:vote:${problemDefinitionId}:clear`)
+    .text('⚠️ Refine', `validate:vote:${problemDefinitionId}:refine`)
+    .text('❓ Not sure', `validate:vote:${problemDefinitionId}:unsure`)
     .row()
-    .text(
-      'ℹ️ View topic',
-      JSON.stringify({ a: 'view_topic', id: problemDefinitionId })
-    );
+    .text('ℹ️ View topic', `validate:topic:${problemDefinitionId}`);
+}
+
+/**
+ * Parse a validation callback string.
+ * Returns null if format is invalid.
+ */
+export function parseValidationCallback(data: string): {
+  action: 'vote' | 'topic';
+  problemDefinitionId: string;
+  vote?: 'clear' | 'refine' | 'unsure';
+} | null {
+  const parts = data.split(':');
+  if (parts[0] !== 'validate') return null;
+
+  const action = parts[1] as 'vote' | 'topic';
+  if (action !== 'vote' && action !== 'topic') return null;
+
+  if (action === 'vote') {
+    const vote = parts[3] as 'clear' | 'refine' | 'unsure';
+    if (!['clear', 'refine', 'unsure'].includes(vote)) return null;
+    return { action: 'vote', problemDefinitionId: parts[2], vote };
+  }
+
+  return { action: 'topic', problemDefinitionId: parts[2] };
 }
 
 /**
  * Handle a vote callback query from the inline keyboard.
- * Returns the response text to send back to the user.
+ * Called from the bot's callback_query handler.
  */
 export async function handleVoteCallback(
-  callbackData: string,
+  problemDefinitionId: string,
+  vote: 'clear' | 'refine' | 'unsure',
   memberId: number
 ): Promise<{ text: string; alert: boolean }> {
-  let payload: { a: string; id: string; v?: string };
   try {
-    payload = JSON.parse(callbackData);
-  } catch {
-    return { text: '❌ Invalid callback data', alert: true };
-  }
+    const result = await processVote(problemDefinitionId, memberId, vote);
 
-  switch (payload.a) {
-    case 'vote': {
-      if (!payload.v) return { text: '❌ Missing vote value', alert: true };
-      const vote = payload.v as 'clear' | 'refine' | 'unsure';
-      const result = await processVote(payload.id, memberId, vote);
-
-      if (!result.recorded) {
-        return { text: '❌ Could not record your vote. Please try again.', alert: true };
-      }
-
-      if (result.tallyComplete && result.result) {
-        return formatTallyResult(result.result);
-      }
-
-      const voteLabel = { clear: '✅ Clear', refine: '⚠️ Refine', unsure: '❓ Not sure' }[vote];
-      return {
-        text:
-          `${voteLabel} recorded ✅\n\n` +
-          `Waiting for other team members to vote...\n` +
-          `I'll let you know when the vote is complete.`,
-        alert: false,
-      };
+    if (!result.recorded) {
+      return { text: '❌ Could not record your vote. Please try again.', alert: true };
     }
 
-    case 'view_topic': {
-      // Return the topic text — gramJS will show this
-      return {
-        text: '📋 Your view_topic request was received. The topic is visible in the original message.',
-        alert: false,
-      };
+    const voteLabel = { clear: '✅ Clear', refine: '⚠️ Refine', unsure: '❓ Not sure' }[vote];
+
+    if (result.tallyComplete && result.result) {
+      return formatTallyResult(result.result);
     }
 
-    default:
-      return { text: '❌ Unknown action', alert: true };
+    return {
+      text:
+        `${voteLabel} recorded ✅\n\n` +
+        `Waiting for other team members to vote...\n` +
+        `I'll let you know when the vote is complete.`,
+      alert: false,
+    };
+  } catch (err) {
+    return { text: `❌ Error: ${err instanceof Error ? err.message : String(err)}`, alert: true };
   }
+}
+
+/**
+ * Handle a topic view callback.
+ */
+export async function handleTopicCallback(
+  problemDefinitionId: string
+): Promise<{ text: string; alert: boolean }> {
+  const [def] = await db
+    .select()
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.id, problemDefinitionId))
+    .limit(1);
+
+  if (!def) {
+    return { text: '❌ Topic not found.', alert: true };
+  }
+
+  const statusIcon = {
+    pending: '⏳',
+    voting: '🗳',
+    confirmed: '✅',
+    needs_work: '⚠️',
+    rejected: '❌',
+    abandoned: '🚫',
+  }[def.status ?? 'pending'] ?? '❓';
+
+  return {
+    text:
+      `${statusIcon} *Topic:* ${def.topicText}\n` +
+      `Status: ${def.status ?? 'unknown'}\n` +
+      `Votes: ${def.votesReceived ?? 0}/${def.totalVoters ?? 0}`,
+    alert: false,
+  };
 }
 
 /**
@@ -154,8 +180,7 @@ function formatTallyResult(result: {
 
   const text =
     `${statusEmoji} *Validation Complete*\n\n` +
-    `Topic: *${voteSummary.total > 0 ? '' : '(topic)'}` +
-    `Votes: ${total}\n` +
+    `Votes received: ${total}\n` +
     `• ✅ Clear: ${voteSummary.clear}\n` +
     `• ⚠️ Refine: ${voteSummary.refine}\n` +
     `• ❓ Not sure: ${voteSummary.unsure}\n\n` +
@@ -176,7 +201,7 @@ export async function sendClarificationToGroup(
 ): Promise<void> {
   const keyboard = new InlineKeyboard().text(
     '✅ Proceed',
-    JSON.stringify({ a: 'proceed', id: projectId })
+    `validate:proceed:${projectId}`
   );
 
   const questionsText = questions

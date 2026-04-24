@@ -41,7 +41,7 @@ export type ProblemDefinitionVote = 'clear' | 'refine' | 'unsure';
 export const problemDefinitions = pgTable('problem_definitions', {
   id: uuid('id').primaryKey().defaultRandom(),
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
-  roundId: uuid('round_id').references(() => projects.id), // circular — added to rounds separately
+  roundId: uuid('round_id'), // FK added via migration to rounds(id) — see migrations/
   topicText: text('topic_text').notNull(),           // original topic submitted
   refinedText: text('refined_text'),                  // refined after clarification (if needed)
   status: text('status').default('pending'),         // ProblemDefinitionStatus
