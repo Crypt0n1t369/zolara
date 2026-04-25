@@ -13,6 +13,7 @@
  */
 
 import { Bot } from 'grammy';
+import { llm } from '../../engine/llm/minimax';
 import { config } from '../../config';
 import { db } from '../../data/db';
 import { projects, members, users, rounds, questions, responses, engagementEvents } from '../../data/schema/projects';
@@ -65,12 +66,28 @@ export async function createProjectBot(botToken: string | null, projectId: strin
  * Wire up all handlers for a project-specific bot.
  */
 function wireProjectBotHandlers(bot: Bot, projectId: string): void {
+  // /help command for project bots
+  bot.command('help', async (ctx) => {
+    await ctx.reply(
+      '*Zolara Project Bot*\n\n' +
+      'Use this bot to join your team\'s consensus rounds.\n\n' +
+      '1. Tap *Start* or send /start to join\n' +
+      '2. Complete onboarding\n' +
+      '3. Answer questions when a round is active\n' +
+      '4. React to synthesis reports in your group\n\n' +
+      'Questions? Ask your admin or type them here.',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
   // /start — member claim flow (deep link)
   // Use message:text with explicit check instead of bot.command() because:
   // - Telegram deep-link args don't always include bot_command entity
   // - bot.command() silently drops messages without entity, breaking claim flow
   bot.on('message:text', async (ctx) => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text ?? '';
+    if (!text) return;
+
     if (text.startsWith('/start')) {
       const args = text.replace(/^\/start\s*/, '').trim();
       if (args.startsWith('claim_')) {
@@ -118,6 +135,21 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
         'The synthesis will be posted to your group when the round closes.',
         { parse_mode: 'Markdown' }
       );
+      return;
+    }
+
+    // AI conversational fallback — answer natural language questions about the project
+    if (text.trim().length >= 3) {
+      try {
+        const projectName = (await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1))[0]?.name ?? 'the project';
+        const systemPrompt = `You are a helpful assistant for the Zolara project bot. The project is called "${projectName}". Members use this bot to join rounds and submit their perspectives. Be brief and helpful.`;
+        const response = await llm.generate({ systemPrompt, userPrompt: text, temperature: 0.7, maxTokens: 400 });
+        if (response.text) {
+          await ctx.reply(response.text.trim(), { parse_mode: 'Markdown' });
+        }
+      } catch (err) {
+        console.error('[ProjectBot AI] error:', err);
+      }
     }
   });
 

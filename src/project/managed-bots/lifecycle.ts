@@ -160,3 +160,26 @@ export function buildCreationLink(
   const encodedName = encodeURIComponent(botName);
   return `https://t.me/newbot/${managerUsername}/${suggestedUsername}?name=${encodedName}`;
 }
+
+/**
+ * Set the command menu for a managed bot so it shows commands in Telegram's UI.
+ */
+export async function setBotCommands(botToken: string): Promise<void> {
+  const commands = [
+    { command: 'start', description: 'Join your team on Zolara' },
+    { command: 'help', description: 'Get help with using this bot' },
+  ];
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  });
+
+  const data = await response.json() as { ok: boolean; description?: string };
+  if (!data.ok) {
+    console.error('[setBotCommands] failed:', data.description);
+  } else {
+    console.log('[setBotCommands] commands set for bot');
+  }
+}

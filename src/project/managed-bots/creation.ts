@@ -11,6 +11,7 @@ import {
   getManagedBotToken,
   setManagedBotWebhook,
   getManagedBotInfo,
+  setBotCommands,
   generateBotUsername,
   buildCreationLink,
 } from './lifecycle';
@@ -169,6 +170,9 @@ export async function finalizeProjectBot(
 
   // Set webhook for the new bot
   await setManagedBotWebhook(botToken, webhookUrl, webhookSecret);
+
+  // Set bot commands (shows in Telegram's command menu)
+  await setBotCommands(botToken);
 
   // Update project with bot info
   const updated = await db

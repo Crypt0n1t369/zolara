@@ -114,7 +114,9 @@ zolaraBot.command('help', async (ctx) => {
 });
 
 zolaraBot.command('helpme', async (ctx) => {
-  await handleAIHelp(ctx, ctx.from!.id, ctx.message.text.replace('/helpme', '').trim() || 'What can you help me with?');
+  const raw = (ctx.message as any)?.text ?? '';
+  const msg = raw.replace('/helpme', '').trim();
+  await handleAIHelp(ctx, ctx.from!.id, msg || 'What can you help me with?');
 });
 
 zolaraBot.command('create', async (ctx) => {
