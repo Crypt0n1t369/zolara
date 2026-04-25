@@ -7,6 +7,17 @@
  */
 
 import { Bot, InlineKeyboard } from 'grammy';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Use ctx.api.answerCallbackQuery to avoid grammY internal
+ * abort-signal conflicts when answering a callback multiple times.
+ */
+async function answerCb(ctx: any, text: string, showAlert = false): Promise<void> {
+  await ctx.api.answerCallbackQuery(ctx.callbackQuery!.id, { text, show_alert: showAlert });
+}
+
 import { config } from '../config';
 import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
@@ -54,6 +65,7 @@ import {
   saveOnboardingState,
   clearOnboardingState,
 } from './flows/onboarding-steps';
+import { handleAIHelp } from './ai-help';
 
 // ── Bot ───────────────────────────────────────────────────────────────────────
 
@@ -95,9 +107,14 @@ zolaraBot.command('help', async (ctx) => {
     '2️⃣ *Invite* members via the link from /invite\n' +
     '3️⃣ *Start a round* to gather perspectives (/startround)\n' +
     '4️⃣ *Receive* an AI synthesis report in your group\n' +
-    '5️⃣ *Deepen* alignment through follow-up rounds',
+    '5️⃣ *Deepen* alignment through follow-up rounds\n\n' +
+    '💬 Ask me anything in natural language — type your question below!',
     { parse_mode: 'Markdown' }
   );
+});
+
+zolaraBot.command('helpme', async (ctx) => {
+  await handleAIHelp(ctx, ctx.from!.id, ctx.message.text.replace('/helpme', '').trim() || 'What can you help me with?');
 });
 
 zolaraBot.command('create', async (ctx) => {
@@ -157,8 +174,18 @@ function buildProjectKeyboard(
   for (const p of choices) {
     const icon = p.status === 'active' ? '🟢' : '⚪';
     const check = p.id === selectedId ? ' ✅' : '';
-    kb.text(`${icon} ${p.name}${check}`, `project:select:${p.id}`).row();
+    kb.text(`${icon} ${p.name}${check}`, `project:select:${p.id}`).text('⚙️', `project:manage:${p.id}`).row();
   }
+  return kb;
+}
+
+/**
+ * Build an inline keyboard for project management (⚙️ button → Archive / Delete)
+ */
+function buildProjectManageKeyboard(projectId: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  kb.text('📦 Archive', `project:archive:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+  kb.text('🔙 Back', 'project:back');
   return kb;
 }
 
@@ -198,7 +225,8 @@ async function resolveAdminProject(adminTelegramId: number): Promise<{
     .orderBy(desc(projects.createdAt))
     .limit(10);
 
-  if (rows.length === 0) return { project: null, hasMultiple: false, choices: [] };
+  if (rows.length === 0) { console.log('[DEBUG resolveAdmin] no rows for telegramId', adminTelegramId); return { project: null, hasMultiple: false, choices: [] }; }
+  console.log('[DEBUG resolveAdmin] got', rows.length, 'projects for', adminTelegramId);
   const active = rows.filter((r) => r.status === 'active');
   const first = active[0] ?? rows[0];
   const project: { id: string; name: string; status: string; botUsername?: string | null } = {
@@ -216,30 +244,31 @@ async function resolveAdminProject(adminTelegramId: number): Promise<{
 
 zolaraBot.command('projects', async (ctx) => {
   const { project, hasMultiple, choices } = await resolveAdminProject(ctx.from!.id);
+  console.log('[DEBUG /projects] telegramId=', ctx.from!.id, 'hasMultiple=', hasMultiple, 'choices count=', choices.length, 'project=', project?.name);
 
   if (!project) {
     await ctx.reply("You don't have any projects yet.\n\nUse /create to set one up.");
     return;
   }
 
-  if (hasMultiple) {
-    const statusIcon = (s: string) => s === 'active' ? '🟢' : '⚪';
-    const lines = choices.map((p) => `${statusIcon(p.status)} ${p.name}`).join('\n');
-    await ctx.reply(
-      `*Your projects:*\n\n${lines}\n\nTap to select. Commands will use the selected project.`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: buildProjectKeyboard(choices),
-      }
-    );
+  const allChoices = choices.length > 0 ? choices : (project ? [{ id: project.id, name: project.name, status: project.status }] : []);
+  console.log('[DEBUG /projects] allChoices count=', allChoices.length);
+  if (allChoices.length === 0) {
+    await ctx.reply("You don't have any projects yet.\n\nUse /create to set one up.");
     return;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [round] = await db.select({ id: rounds.id, roundNumber: rounds.roundNumber, status: rounds.status } as any).from(rounds).where(eq(rounds.projectId, project.id)).limit(1);
-  const status = round ? `Round #${round.roundNumber} — *${round.status}*` : 'No active round';
-
-  await ctx.reply(`*${project.name}*\n\nStatus: ${project.status}\nCurrent round: ${status}`, { parse_mode: 'Markdown' });
+  const statusIcon = (s: string) => s === 'active' ? '🟢' : '⚪';
+  const lines = allChoices.map((p) => `${statusIcon(p.status)} ${p.name}`).join('\n');
+  const selectedId = project?.id;
+  await ctx.reply(
+    `*Your projects:*\n\n${lines}\n\nTap a name to select it. Tap ⚙️ to manage.`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: buildProjectKeyboard(allChoices, selectedId),
+    }
+  );
+  return;
 });
 
 zolaraBot.command('startround', async (ctx) => {
@@ -504,7 +533,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Admin group confirmation callbacks
   if (data.startsWith('admin:confirm_group:') || data.startsWith('admin:reject_group:')) {
     const { project } = await resolveAdminProject(userId);
-    if (!project) { await ctx.answerCallbackQuery('No project found.'); return; }
+    if (!project) { await answerCb(ctx, '$1'); return; }
     await handleAdminGroupCallback(ctx, data, userId, project.id);
     return;
   }
@@ -518,7 +547,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Initiation flow callbacks (admin /create)
   if (data.startsWith('init:')) {
     const state = await loadInitState(userId);
-    if (!state) { await ctx.answerCallbackQuery('Session expired. Use /create to start again.'); return; }
+    if (!state) { await answerCb(ctx, '$1'); return; }
     const newState = await handleCallback(ctx, state, data);
     if (!newState) return;
     await saveInitState(newState);
@@ -529,7 +558,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Claim flow callbacks (member commitment)
   if (data.startsWith('claim:')) {
     const state = await loadClaimState(userId);
-    if (!state) { await ctx.answerCallbackQuery('Session expired. Send /start to begin again.'); return; }
+    if (!state) { await answerCb(ctx, '$1'); return; }
     await handleClaimCallback(ctx, state, data);
     return;
   }
@@ -537,7 +566,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Onboarding callbacks (member profile)
   if (data.startsWith('onboard:')) {
     const state = await loadOnboardingState(userId);
-    if (!state) { await ctx.answerCallbackQuery('Session expired. Send /start to begin again.'); return; }
+    if (!state) { await answerCb(ctx, '$1'); return; }
     await handleOnboardingCallback(ctx, state, data);
     return;
   }
@@ -545,7 +574,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Report reaction callbacks (group members reacting to synthesis)
   if (data.startsWith('reaction:')) {
     const [, projectId, roundNumber, reaction] = data.split(':') as [string, string, string, string];
-    await ctx.answerCallbackQuery(`You reacted: ${reaction}`);
+    await answerCb(ctx, `$1`);
     // Store reaction in DB
     try {
       const { engagementEvents } = await import('../data/schema/projects');
@@ -588,20 +617,20 @@ zolaraBot.on('callback_query:data', async (ctx) => {
 
       const parsed = parseValidationCallback(data);
       if (!parsed) {
-        await ctx.answerCallbackQuery('❌ Invalid callback');
+        await answerCb(ctx, '$1');
         return;
       }
 
       if (parsed.action === 'vote') {
         const result = await handleVoteCallback(parsed.problemDefinitionId, parsed.vote!, userId);
-        await ctx.answerCallbackQuery(result.text, { show_alert: result.alert } as any);
+        await answerCb(ctx, result.text, result.alert);
       } else if (parsed.action === 'topic') {
         const result = await handleTopicCallback(parsed.problemDefinitionId);
-        await ctx.answerCallbackQuery(result.text, { show_alert: result.alert } as any);
+        await answerCb(ctx, result.text, result.alert);
       }
     } catch (err) {
       console.error('[Validation] Callback error:', err);
-      await ctx.answerCallbackQuery('❌ Error processing vote');
+      await answerCb(ctx, '$1');
     }
     return;
   }
@@ -610,7 +639,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('phase:')) {
     // Verify admin
     const { project } = await resolveAdminProject(userId);
-    if (!project) { await ctx.answerCallbackQuery('❌ Admin access required.'); return; }
+    if (!project) { await answerCb(ctx, '$1'); return; }
 
     const parts = data.split(':');
     const action = parts[1];
@@ -618,23 +647,23 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (action === 'refresh' || action === 'back') {
       const flags = listRuntimeFlags();
       await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(flags) });
-      await ctx.answerCallbackQuery('🔄 Refreshed');
+      await answerCb(ctx, '$1');
       return;
     }
 
     if (action === 'detail') {
       const key = parts[2];
-      if (!key || !VALID_PHASES.includes(key)) { await ctx.answerCallbackQuery('❌ Unknown phase'); return; }
+      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, '$1'); return; }
       const flags = listRuntimeFlags();
       const value = flags[key] ?? 'disabled';
       await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseDetailKeyboard(key, value) });
-      await ctx.answerCallbackQuery(PHASE_SHORT[key] ?? key);
+      await answerCb(ctx, PHASE_SHORT[key] ?? key);
       return;
     }
 
     if (action === 'toggle') {
       const key = parts[2];
-      if (!key || !VALID_PHASES.includes(key)) { await ctx.answerCallbackQuery('❌ Unknown phase'); return; }
+      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, '$1'); return; }
       const flags = listRuntimeFlags();
       const current = flags[key] ?? 'disabled';
       const next = current === 'active' ? 'disabled' : 'active';
@@ -642,35 +671,78 @@ zolaraBot.on('callback_query:data', async (ctx) => {
       const updatedFlags = listRuntimeFlags();
       await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(updatedFlags) });
       const label = PHASE_SHORT[key] ?? key;
-      await ctx.answerCallbackQuery(`✅ ${label} → ${next}`, { show_alert: true } as any);
+      await answerCb(ctx, `✅ ${label} → ${next}`, true);
       return;
     }
 
     if (action === 'noop') {
-      await ctx.answerCallbackQuery(' ');
+      await answerCb(ctx, '$1');
       return;
     }
 
-    await ctx.answerCallbackQuery(' ');
+    await answerCb(ctx, '$1');
     return;
   }
 
   // Project selection callbacks
   if (data.startsWith('project:select:')) {
     const projectId = data.split(':')[2];
-    if (!projectId) { await ctx.answerCallbackQuery('❌ Invalid selection'); return; }
+    if (!projectId) { await answerCb(ctx, '❌ Invalid selection'); return; }
 
-    // Verify this project belongs to the admin
     const { choices } = await resolveAdminProject(userId);
     const valid = choices.find((c) => c.id === projectId);
-    if (!valid) { await ctx.answerCallbackQuery('❌ Project not found'); return; }
+    if (!valid) { await answerCb(ctx, '❌ Project not found'); return; }
 
-    // Cache selection for 30 minutes
     await redis.setex(projectSelectionKey(userId), PROJECT_SELECTION_TTL, projectId);
-
-    const statusIcon = valid.status === 'active' ? '🟢' : '⚪';
-    await ctx.answerCallbackQuery(`✅ ${valid.name} selected`, { show_alert: true } as any);
+    await answerCb(ctx, `✅ ${valid.name} selected`, true);
     await ctx.editMessageReplyMarkup({ reply_markup: buildProjectKeyboard(choices, projectId) });
+    return;
+  }
+
+  // Project management: show detail keyboard (⚙️ button)
+  if (data.startsWith('project:manage:')) {
+    const projectId = data.split(':')[2];
+    if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
+
+    const [proj] = await db.select({ id: projects.id, name: projects.name, status: projects.status }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj) { await answerCb(ctx, '❌ Project not found'); return; }
+
+    const statusLabel = proj.status === 'active' ? '🟢 Active' : proj.status === 'archived' ? '📦 Archived' : `⚪ ${proj.status}`;
+    await ctx.editMessageText(
+      `*${proj.name}*\n\nStatus: ${statusLabel}\n\nWhat do you want to do?`,
+      { parse_mode: 'Markdown', reply_markup: buildProjectManageKeyboard(projectId) }
+    );
+    await answerCb(ctx, ' ');
+    return;
+  }
+
+  // Archive a project (30-day soft delete, data preserved)
+  if (data.startsWith('project:archive:')) {
+    const projectId = data.split(':')[2];
+    if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
+    await db.update(projects).set({ status: 'archived', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await answerCb(ctx, '📦 Project archived — data kept 30 days', true);
+    return;
+  }
+
+  // Delete a project (30-day soft delete, data preserved)
+  if (data.startsWith('project:delete:')) {
+    const projectId = data.split(':')[2];
+    if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
+    await db.update(projects).set({ status: 'deleted', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await answerCb(ctx, '🗑 Project deleted — data kept 30 days', true);
+    return;
+  }
+
+  // Back to project list
+  if (data === 'project:back') {
+    const { choices } = await resolveAdminProject(userId);
+    if (!choices.length) { await answerCb(ctx, 'No projects'); return; }
+    await ctx.editMessageText('*Your projects:*\n\nTap a project to select it.', {
+      parse_mode: 'Markdown',
+      reply_markup: buildProjectKeyboard(choices),
+    });
+    await answerCb(ctx, ' ');
     return;
   }
 });
@@ -678,17 +750,17 @@ zolaraBot.on('callback_query:data', async (ctx) => {
 async function handleAdminGroupCallback(ctx: any, data: string, adminTelegramId: number, projectId: string): Promise<void> {
   const action = data.split(':')[1];
   const detectData = await redis.get(`group_detect:${projectId}`);
-  if (!detectData) { await ctx.answerCallbackQuery('Session expired.'); return; }
+  if (!detectData) { await answerCb(ctx, '$1'); return; }
   const { groupId, groupTitle } = JSON.parse(detectData) as { groupId: number; groupTitle: string };
 
   if (action === 'confirm') {
     await db.update(projects).set({ groupIds: [groupId] }).where(eq(projects.id, projectId as any));
     await redis.del(`group_detect:${projectId}`);
-    await ctx.answerCallbackQuery(`✅ Reports will go to ${groupTitle}`);
+    await answerCb(ctx, `$1`);
     await ctx.reply(`✅ *Group set!*\n\nRound reports will now be posted to *${groupTitle}*.`, { parse_mode: 'Markdown' });
   } else {
     await redis.del(`group_detect:${projectId}`);
-    await ctx.answerCallbackQuery('Dismissed.');
+    await answerCb(ctx, '$1');
     await ctx.reply('No problem. When I\'m added to the correct group, I\'ll ask again.');
   }
 }
@@ -961,14 +1033,9 @@ zolaraBot.on('message:text', async (ctx) => {
     return;
   }
 
-  // Fallback for DMs only — basic help prompt
-  // (No free chat; keep Zolara focused on the structured process)
-  await ctx.reply(
-    '👋 I\'m here to help with the Zolara consensus process.\n\n' +
-    '/help — See available commands\n' +
-    '/create — Set up a project',
-    { parse_mode: 'Markdown' }
-  );
+  // AI help for non-command messages (interpret natural language)
+  console.log('[MessageText] userId=', userId, 'text=', text.substring(0, 100));
+  await handleAIHelp(ctx, userId, text);
 });
 
 // ── Member Claim Flow ──────────────────────────────────────────────────────────
@@ -1048,7 +1115,7 @@ async function resolveProjectIdFromBot(botTelegramId: number): Promise<string | 
 // ── Onboarding callback stub ──────────────────────────────────────────────────
 
 async function handleOnboardingCallback(ctx: any, state: OnboardingState, data: string): Promise<void> {
-  await ctx.answerCallbackQuery('Onboarding in progress...');
+  await answerCb(ctx, '$1');
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────
