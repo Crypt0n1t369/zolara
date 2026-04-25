@@ -1066,9 +1066,22 @@ async function handleMemberClaim(ctx: any, userId: number, projectId: string): P
   await handleClaimWelcome(ctx, state);
 }
 
+// ── Question detection patterns ─────────────────────────────────────────────────
+const question_patterns = ['what', 'how', 'why', 'when', 'where', 'who', 'which', 'should', 'could', 'can ', 'is ', 'do ', 'does ', 'want', 'tell', 'explain', '?'];
+
 // ── Initiation text handling ──────────────────────────────────────────────────
 
 async function handleInitiationText(ctx: any, state: InitiationState, text: string): Promise<void> {
+  // Detect if user is asking a question vs providing an answer to the flow
+  const lower = text.trim().toLowerCase();
+  const isQuestion = question_patterns.some((q) => lower.startsWith(q)) || text.trim().endsWith('?');
+
+  if (isQuestion) {
+    // Route to AI help — answer the question without advancing the flow
+    await handleAIHelp(ctx, state.telegramId, text);
+    return;
+  }
+
   switch (state.step) {
     case 'project_name': {
       if (text.trim().length < 2) { await ctx.reply('Please enter at least 2 characters.'); return; }

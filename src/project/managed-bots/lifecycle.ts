@@ -139,13 +139,22 @@ export async function getManagedBotInfo(botUserId: number): Promise<ManagedBotIn
  * Format: {project_name_slug}_zolara_bot
  */
 export function generateBotUsername(projectName: string): string {
+  // Telegram: max 64 chars total, must end with _bot or Bot (case-insensitive)
+  // We use _zolara_bot = 11 chars suffix, so slug max = 64 - 1 (separator) - 11 = 52
+  const suffix = '_zolara_bot';
+  const maxSlug = 52;
   const slug = projectName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
-    .slice(0, 30); // Telegram limits bot usernames to 64 chars total, leave room for suffix
+    .slice(0, maxSlug);
 
-  return `${slug}_zolara_bot`;
+  const username = `${slug}${suffix}`;
+  // If still too long (very short suffix case), just use project name
+  if (username.length > 64) {
+    return `${projectName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, maxSlug)}${suffix}`;
+  }
+  return username;
 }
 
 /**
