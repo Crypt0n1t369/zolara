@@ -1,6 +1,7 @@
 /**
- * Zolara Bot — consolidated single bot handler
- * Handles both admin commands and member interactions on @Zolara_bot
+ * Zolara Bot — admin control plane
+ * Handles admin commands via @Zolara_bot (long polling).
+ * Member interactions on project bots route through webhook via server/index.ts.
  *
  * Admin flow: /create, /startround, /cancelround, /projects, /members, /invite, /status
  * Member flow: /start claim_xxx → commitment → onboarding → question answering
@@ -23,7 +24,7 @@ import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
 import { projects, admins, members, rounds } from '../data/schema/projects';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, ne } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
 import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
@@ -169,13 +170,21 @@ function projectSelectionKey(telegramId: number): string {
 /**
  * Build an inline keyboard for project selection.
  */
+function statusIcon(s: string): string {
+  if (s === 'active') return '🟢';
+  if (s === 'archived') return '🟠';
+  if (s === 'pending') return '🟡';
+  return '⚪';
+}
+
 function buildProjectKeyboard(
   choices: Array<{ id: string; name: string; status: string }>,
   selectedId?: string
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of choices) {
-    const icon = p.status === 'active' ? '🟢' : '⚪';
+    if (p.status === 'deleted') continue; // never show deleted in list
+    const icon = statusIcon(p.status);
     const check = p.id === selectedId ? ' ✅' : '';
     kb.text(`${icon} ${p.name}${check}`, `project:select:${p.id}`).text('⚙️', `project:manage:${p.id}`).row();
   }
@@ -183,11 +192,20 @@ function buildProjectKeyboard(
 }
 
 /**
- * Build an inline keyboard for project management (⚙️ button → Archive / Delete)
+ * Build an inline keyboard for project management (⚙️ button → status-aware actions)
+ * active   → Archive / Delete
+ * archived → Restore / Delete
+ * pending  → Delete (nothing to archive yet)
  */
-function buildProjectManageKeyboard(projectId: string): InlineKeyboard {
+function buildProjectManageKeyboard(projectId: string, status: string): InlineKeyboard {
   const kb = new InlineKeyboard();
-  kb.text('📦 Archive', `project:archive:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+  if (status === 'active') {
+    kb.text('📦 Archive', `project:archive:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+  } else if (status === 'archived') {
+    kb.text('↩️ Restore', `project:restore:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+  } else if (status === 'pending') {
+    kb.text('🗑 Delete', `project:delete:${projectId}`).row();
+  }
   kb.text('🔙 Back', 'project:back');
   return kb;
 }
@@ -224,7 +242,10 @@ async function resolveAdminProject(adminTelegramId: number): Promise<{
     .select({ id: projects.id, name: projects.name, status: projects.status, botUsername: projects.botUsername })
     .from(projects)
     .innerJoin(admins, eq(admins.id, projects.adminId))
-    .where(eq(admins.telegramId, adminTelegramId))
+    .where(and(
+      eq(admins.telegramId, adminTelegramId),
+      ne(projects.status, 'deleted')
+    ))
     .orderBy(desc(projects.createdAt))
     .limit(10);
 
@@ -261,13 +282,13 @@ zolaraBot.command('projects', async (ctx) => {
     return;
   }
 
-  const statusIcon = (s: string) => s === 'active' ? '🟢' : '⚪';
-  const lines = allChoices.map((p) => `${statusIcon(p.status)} ${p.name}`).join('\n');
+  const escapeHtml = (t: string) => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lines = allChoices.map((p) => `${statusIcon(p.status)} ${escapeHtml(p.name)}`).join('\n');
   const selectedId = project?.id;
   await ctx.reply(
-    `*Your projects:*\n\n${lines}\n\nTap a name to select it. Tap ⚙️ to manage.`,
+    `<b>Your projects:</b>\n\n${lines}\n\nTap a name to select it. Tap [Settings] to manage.`,
     {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: buildProjectKeyboard(allChoices, selectedId),
     }
   );
@@ -711,9 +732,10 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (!proj) { await answerCb(ctx, '❌ Project not found'); return; }
 
     const statusLabel = proj.status === 'active' ? '🟢 Active' : proj.status === 'archived' ? '📦 Archived' : `⚪ ${proj.status}`;
+    const escapeHtml = (t: string) => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     await ctx.editMessageText(
-      `*${proj.name}*\n\nStatus: ${statusLabel}\n\nWhat do you want to do?`,
-      { parse_mode: 'Markdown', reply_markup: buildProjectManageKeyboard(projectId) }
+      `<b>${escapeHtml(proj.name)}</b>\n\nStatus: ${statusLabel}\n\nWhat do you want to do?`,
+      { parse_mode: 'HTML', reply_markup: buildProjectManageKeyboard(projectId, proj.status ?? 'pending') }
     );
     await answerCb(ctx, ' ');
     return;
@@ -737,14 +759,25 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     return;
   }
 
+  // Restore an archived project
+  if (data.startsWith('project:restore:')) {
+    const projectId = data.split(':')[2];
+    if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
+    await db.update(projects).set({ status: 'active', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await answerCb(ctx, '↩️ Project restored', true);
+    return;
+  }
+
   // Back to project list
   if (data === 'project:back') {
     const { choices } = await resolveAdminProject(userId);
     if (!choices.length) { await answerCb(ctx, 'No projects'); return; }
-    await ctx.editMessageText('*Your projects:*\n\nTap a project to select it.', {
-      parse_mode: 'Markdown',
-      reply_markup: buildProjectKeyboard(choices),
-    });
+    const escapeHtml = (t: string) => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const lines = choices.map((p) => `${statusIcon(p.status)} ${escapeHtml(p.name)}`).join('\n');
+    await ctx.editMessageText(
+      `<b>Your projects:</b>\n\n${lines}\n\nTap a name to select it. Tap [Settings] to manage.`,
+      { parse_mode: 'HTML', reply_markup: buildProjectKeyboard(choices) }
+    );
     await answerCb(ctx, ' ');
     return;
   }
