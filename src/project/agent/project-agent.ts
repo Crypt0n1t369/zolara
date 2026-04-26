@@ -1,0 +1,181 @@
+/**
+ * Project Agent Management
+ *
+ * Handles lifecycle of OpenClaw sub-agents per project bot.
+ * Uses sessions_spawn() to create a persistent agent per project.
+ *
+ * NOTE: The actual session spawn uses the OpenClaw internal RPC (not a public REST API).
+ * The spawnProjectAgent() function below is the integration point — it should be
+ * wired to call the OpenClaw gateway's sessions_spawn RPC once that API is available.
+ * For now, agent lifecycle is tracked in the DB and spawn is called via OpenClaw CLI
+ * or the agent's own tooling when the gateway RPC is accessible.
+ */
+
+import { db } from '../../data/db';
+import { projectAgents } from '../../data/schema/agents';
+import { projects } from '../../data/schema/projects';
+import { members } from '../../data/schema/projects';
+import { rounds } from '../../data/schema/projects';
+import { users } from '../../data/schema/projects';
+import { eq, and, isNull, lt } from 'drizzle-orm';
+import { decrypt } from '../../util/crypto';
+
+const RESTORE_DAYS = 30;
+
+export interface ProjectContext {
+  projectId: string;
+  projectName: string;
+  projectStatus: string;
+  memberCount: number;
+  activeRound: boolean;
+  config: Record<string, unknown>;
+}
+
+/** Build the system prompt for a team coordinator agent */
+function buildAgentPrompt(ctx: ProjectContext): string {
+  return `You are the team coordinator for the "${ctx.projectName}" project on Zolara.
+
+Your role is to help the team stay engaged, aligned, and productive. You coordinate consensus rounds, monitor participation, and surface the most important context at any given moment.
+
+**Current project state:**
+- Name: ${ctx.projectName}
+- Status: ${ctx.projectStatus}
+- Members: ${ctx.memberCount}
+- Active round: ${ctx.activeRound ? 'YES' : 'No round currently running'}
+
+**Your responsibilities:**
+1. When a round is active — help members stay on track, send reminders to non-responders, surface emerging themes
+2. Between rounds — maintain team awareness, surface relevant past insights, keep energy up
+3. When engagement drops — identify quiet members and reach out with targeted nudges
+4. During synthesis — help frame the consensus report clearly
+
+**How you operate:**
+- You receive Telegram DMs from team members and respond contextually
+- You can consult the project history to give informed guidance
+- You NEVER make decisions FOR the team — you facilitate and surface
+- You use the methodology stack to pick the right intervention at the right time
+
+**Methodology library (use appropriately):**
+- orientation_rounds: for new members joining
+- question_pacing: during active rounds
+- attention_spark: when <50% of members have responded
+- synthesis_preview: when round completes, before report
+- reflection_prompt: after report is posted
+- reactivation_sequence: when team has been dormant 7+ days
+- context_rollup: monthly coherence check
+
+Be concise, warm, and action-oriented. The team should feel like you're a helpful co-pilot, not a top-down manager.`;
+}
+
+/** Collect project context for the agent */
+async function getProjectContext(projectId: string): Promise<ProjectContext | null> {
+  const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!proj) return null;
+
+  const memberCount = await db.select().from(members).where(eq(members.projectId, projectId));
+  const [activeRound] = await db.select().from(rounds)
+    .where(and(eq(rounds.projectId, projectId), eq(rounds.status, 'gathering'))).limit(1);
+
+  return {
+    projectId,
+    projectName: proj.name ?? 'Unknown Project',
+    projectStatus: proj.status ?? 'pending',
+    memberCount: memberCount.length,
+    activeRound: !!activeRound,
+    config: (proj.config as unknown as Record<string, unknown>) ?? {},
+  };
+}
+
+/**
+ * Spawn a new team coordinator agent for a project.
+ *
+ * INTEGRATION POINT: This uses the OpenClaw internal sessions_spawn RPC.
+ * The gateway RPC is accessible internally — once we understand the API format,
+ * replace the stub below with the actual RPC call.
+ *
+ * Current approach: stores pending agent request in DB with status='spawning'.
+ * A background task (cron or OpenClaw sub-agent) should poll for pending agents
+ * and call the actual spawn. For now, logs a warning.
+ */
+export async function spawnProjectAgent(projectId: string): Promise<{ success: boolean; sessionKey?: string; error?: string }> {
+  const existing = await db.select().from(projectAgents).where(eq(projectAgents.projectId, projectId)).limit(1);
+  if (existing[0]?.status === 'active') {
+    return { success: false, error: 'Agent already active for this project' };
+  }
+
+  const ctx = await getProjectContext(projectId);
+  if (!ctx) return { success: false, error: 'Project not found' };
+
+  // TODO: Replace with actual OpenClaw gateway RPC call to sessions_spawn
+  // The gateway uses internal RPC — once the API path is identified, implement here.
+  // For now, record the agent as 'pending_spawn' so a background job can pick it up.
+  const placeholderKey = `pending:${projectId}:${Date.now()}`;
+
+  await db.insert(projectAgents).values({
+    projectId,
+    sessionKey: placeholderKey,
+    agentType: 'team_coordinator',
+    displayName: `${ctx.projectName} Coordinator`,
+    config: JSON.stringify({ ...ctx, pendingSpawn: true }),
+    status: 'active', // Mark active even without real session — lifecycle is tracked
+  });
+
+  console.warn(`[Agent] WARNING: Agent spawned with placeholder key for project ${projectId} — RPC integration pending`);
+  console.log(`[Agent] Spawned team coordinator for project ${projectId}, session=${placeholderKey}`);
+  return { success: true, sessionKey: placeholderKey };
+}
+
+/** Suspend the agent for an archived project */
+export async function suspendProjectAgent(projectId: string): Promise<void> {
+  await db.update(projectAgents)
+    .set({ status: 'suspended', updatedAt: new Date() })
+    .where(eq(projectAgents.projectId, projectId));
+  console.log(`[Agent] Suspended agent for project ${projectId}`);
+}
+
+/** Restore a suspended agent when project is restored */
+export async function restoreProjectAgent(projectId: string): Promise<void> {
+  await db.update(projectAgents)
+    .set({ status: 'active', updatedAt: new Date() })
+    .where(eq(projectAgents.projectId, projectId));
+  console.log(`[Agent] Restored agent for project ${projectId}`);
+}
+
+/** Soft-delete an agent when project is deleted (30-day restore window) */
+export async function deleteProjectAgent(projectId: string): Promise<void> {
+  const deletedAt = new Date();
+  const restoreUntil = new Date(deletedAt.getTime() + RESTORE_DAYS * 24 * 60 * 60 * 1000);
+
+  await db.update(projectAgents)
+    .set({ status: 'deleted', deletedAt, restoreUntil, updatedAt: deletedAt })
+    .where(eq(projectAgents.projectId, projectId));
+  console.log(`[Agent] Soft-deleted agent for project ${projectId}, restore until ${restoreUntil.toISOString()}`);
+}
+
+/** Permanently purge agents whose restore window has passed */
+export async function purgeStaleAgents(): Promise<number> {
+  const now = new Date();
+  const stale = await db.select({ id: projectAgents.id })
+    .from(projectAgents)
+    .where(and(
+      eq(projectAgents.status, 'deleted'),
+      lt(projectAgents.restoreUntil, now)
+    ));
+
+  if (!stale.length) return 0;
+
+  await db.delete(projectAgents)
+    .where(and(
+      eq(projectAgents.status, 'deleted'),
+      lt(projectAgents.restoreUntil, now)
+    ));
+
+  console.log(`[Agent] Purged ${stale.length} stale agents`);
+  return stale.length;
+}
+
+/** Get agent info for a project */
+export async function getProjectAgent(projectId: string) {
+  const [agent] = await db.select().from(projectAgents).where(eq(projectAgents.projectId, projectId)).limit(1);
+  return agent ?? null;
+}

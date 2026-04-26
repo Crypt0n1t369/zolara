@@ -16,6 +16,7 @@ import {
   buildCreationLink,
 } from './lifecycle';
 import { config } from '../../config';
+import { spawnProjectAgent } from '../agent/project-agent';
 import { redis } from '../../data/redis';
 
 // The Zolara bot's Telegram username (for creation links via BotFather)
@@ -193,8 +194,9 @@ export async function finalizeProjectBot(
     throw new Error('Failed to update project with bot info');
   }
 
-  // Bot username comes from the managed_bot_created event, not from API
-  // We can't call getManagedBotInfo reliably, so we accept it as param
+  // Spawn team coordinator agent for this project (non-blocking)
+  spawnProjectAgent(project.id).catch((err) => console.error('[Agent] Failed to spawn agent:', err));
+
   return {
     projectId: project.id,
     botUsername: suggestedUsername ?? 'unknown',

@@ -68,6 +68,7 @@ import {
   clearOnboardingState,
 } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
+import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
 
 // ── Bot ───────────────────────────────────────────────────────────────────────
 
@@ -746,6 +747,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     const projectId = data.split(':')[2];
     if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
     await db.update(projects).set({ status: 'archived', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await suspendProjectAgent(projectId);
     await answerCb(ctx, '📦 Project archived — data kept 30 days', true);
     return;
   }
@@ -755,6 +757,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     const projectId = data.split(':')[2];
     if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
     await db.update(projects).set({ status: 'deleted', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await deleteProjectAgent(projectId);
     await answerCb(ctx, '🗑 Project deleted — data kept 30 days', true);
     return;
   }
@@ -764,6 +767,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     const projectId = data.split(':')[2];
     if (!projectId) { await answerCb(ctx, '❌ Invalid'); return; }
     await db.update(projects).set({ status: 'active', updatedAt: new Date() }).where(eq(projects.id, projectId));
+    await restoreProjectAgent(projectId);
     await answerCb(ctx, '↩️ Project restored', true);
     return;
   }
