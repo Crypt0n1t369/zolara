@@ -15,6 +15,13 @@
       "when": 1777052670852,
       "tag": "0001_dapper_christian_walker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777400000000,
+      "tag": "0002_project_agents",
+      "breakpoints": true
     }
   ]
 }

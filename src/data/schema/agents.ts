@@ -12,12 +12,12 @@
  * coordinates rounds, and provides contextual guidance to the team.
  */
 
-import { pgTable, serial, text, timestamp, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, timestamp, index, unique, uuid } from 'drizzle-orm/pg-core';
 import { projects } from './projects';
 
 export const projectAgents = pgTable('project_agents', {
   id: serial('id').primaryKey(),
-  projectId: text('project_id').references(() => projects.id, { onDelete: 'cascade' }).unique(),
+  projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }).unique(),
 
   /** OpenClaw session key for this agent's session */
   sessionKey: text('session_key'),
