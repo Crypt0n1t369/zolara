@@ -61,6 +61,7 @@ import {
 } from './flows/onboarding-state';
 import {
   handleOnboardingStep,
+  handleOnboardingText,
   loadOnboardingState,
   saveOnboardingState,
   clearOnboardingState,
@@ -535,7 +536,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Admin group confirmation callbacks
   if (data.startsWith('admin:confirm_group:') || data.startsWith('admin:reject_group:')) {
     const { project } = await resolveAdminProject(userId);
-    if (!project) { await answerCb(ctx, '$1'); return; }
+    if (!project) { await answerCb(ctx, ''); return; }
     await handleAdminGroupCallback(ctx, data, userId, project.id);
     return;
   }
@@ -549,7 +550,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Initiation flow callbacks (admin /create)
   if (data.startsWith('init:')) {
     const state = await loadInitState(userId);
-    if (!state) { await answerCb(ctx, '$1'); return; }
+    if (!state) { await answerCb(ctx, ''); return; }
     const newState = await handleCallback(ctx, state, data);
     if (!newState) return;
     await saveInitState(newState);
@@ -560,7 +561,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Claim flow callbacks (member commitment)
   if (data.startsWith('claim:')) {
     const state = await loadClaimState(userId);
-    if (!state) { await answerCb(ctx, '$1'); return; }
+    if (!state) { await answerCb(ctx, ''); return; }
     await handleClaimCallback(ctx, state, data);
     return;
   }
@@ -568,7 +569,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Onboarding callbacks (member profile)
   if (data.startsWith('onboard:')) {
     const state = await loadOnboardingState(userId);
-    if (!state) { await answerCb(ctx, '$1'); return; }
+    if (!state) { await answerCb(ctx, ''); return; }
     await handleOnboardingCallback(ctx, state, data);
     return;
   }
@@ -576,7 +577,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Report reaction callbacks (group members reacting to synthesis)
   if (data.startsWith('reaction:')) {
     const [, projectId, roundNumber, reaction] = data.split(':') as [string, string, string, string];
-    await answerCb(ctx, `$1`);
+    await answerCb(ctx, 'Done');
     // Store reaction in DB
     try {
       const { engagementEvents } = await import('../data/schema/projects');
@@ -619,7 +620,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
 
       const parsed = parseValidationCallback(data);
       if (!parsed) {
-        await answerCb(ctx, '$1');
+        await answerCb(ctx, '');
         return;
       }
 
@@ -632,7 +633,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
       }
     } catch (err) {
       console.error('[Validation] Callback error:', err);
-      await answerCb(ctx, '$1');
+      await answerCb(ctx, '');
     }
     return;
   }
@@ -641,7 +642,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('phase:')) {
     // Verify admin
     const { project } = await resolveAdminProject(userId);
-    if (!project) { await answerCb(ctx, '$1'); return; }
+    if (!project) { await answerCb(ctx, ''); return; }
 
     const parts = data.split(':');
     const action = parts[1];
@@ -649,13 +650,13 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (action === 'refresh' || action === 'back') {
       const flags = listRuntimeFlags();
       await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(flags) });
-      await answerCb(ctx, '$1');
+      await answerCb(ctx, '');
       return;
     }
 
     if (action === 'detail') {
       const key = parts[2];
-      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, '$1'); return; }
+      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, ''); return; }
       const flags = listRuntimeFlags();
       const value = flags[key] ?? 'disabled';
       await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseDetailKeyboard(key, value) });
@@ -665,7 +666,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
 
     if (action === 'toggle') {
       const key = parts[2];
-      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, '$1'); return; }
+      if (!key || !VALID_PHASES.includes(key)) { await answerCb(ctx, ''); return; }
       const flags = listRuntimeFlags();
       const current = flags[key] ?? 'disabled';
       const next = current === 'active' ? 'disabled' : 'active';
@@ -678,11 +679,11 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     }
 
     if (action === 'noop') {
-      await answerCb(ctx, '$1');
+      await answerCb(ctx, '');
       return;
     }
 
-    await answerCb(ctx, '$1');
+    await answerCb(ctx, '');
     return;
   }
 
@@ -752,17 +753,17 @@ zolaraBot.on('callback_query:data', async (ctx) => {
 async function handleAdminGroupCallback(ctx: any, data: string, adminTelegramId: number, projectId: string): Promise<void> {
   const action = data.split(':')[1];
   const detectData = await redis.get(`group_detect:${projectId}`);
-  if (!detectData) { await answerCb(ctx, '$1'); return; }
+  if (!detectData) { await answerCb(ctx, ''); return; }
   const { groupId, groupTitle } = JSON.parse(detectData) as { groupId: number; groupTitle: string };
 
   if (action === 'confirm') {
     await db.update(projects).set({ groupIds: [groupId] }).where(eq(projects.id, projectId as any));
     await redis.del(`group_detect:${projectId}`);
-    await answerCb(ctx, `$1`);
+    await answerCb(ctx, 'Group set!');
     await ctx.reply(`✅ *Group set!*\n\nRound reports will now be posted to *${groupTitle}*.`, { parse_mode: 'Markdown' });
   } else {
     await redis.del(`group_detect:${projectId}`);
-    await answerCb(ctx, '$1');
+    await answerCb(ctx, 'Cancelled');
     await ctx.reply('No problem. When I\'m added to the correct group, I\'ll ask again.');
   }
 }
@@ -1018,6 +1019,16 @@ zolaraBot.on('message:text', async (ctx) => {
     return;
   }
 
+  // Member onboarding text input (role, interests steps)
+  const onboardState = await loadOnboardingState(userId);
+  if (onboardState) {
+    const updated = await handleOnboardingText(ctx, onboardState, text);
+    if (updated) {
+      await saveOnboardingState(updated);
+    }
+    return;
+  }
+
   // Settings reply (admin typing a new value in the interactive settings flow)
   await handleSettingsReply(ctx);
 
@@ -1107,11 +1118,24 @@ async function handleInitiationText(ctx: any, state: InitiationState, text: stri
 // ── Response saving ───────────────────────────────────────────────────────────
 
 async function saveResponse(userId: number, projectId: string, roundId: string, questionId: string, text: string): Promise<void> {
-  const { responses } = await import('../data/schema/projects');
+  const { responses, members, users } = await import('../data/schema/projects');
   try {
+    // Look up the actual database member ID from the Telegram user ID
+    const [memberRow] = await db
+      .select({ memberId: members.id })
+      .from(members)
+      .innerJoin(users, eq(members.userId, users.id))
+      .where(eq(users.telegramId, userId))
+      .limit(1);
+
+    if (!memberRow) {
+      dbLog.insertFailed('responses', { userId, projectId, reason: 'member_not_found' }, new Error('Member not found'));
+      return;
+    }
+
     await db.insert(responses).values({
       questionId: questionId as any,
-      memberId: userId as any,
+      memberId: memberRow.memberId,
       responseText: text.slice(0, 5000),
       createdAt: new Date(),
     });
@@ -1130,7 +1154,7 @@ async function resolveProjectIdFromBot(botTelegramId: number): Promise<string | 
 // ── Onboarding callback stub ──────────────────────────────────────────────────
 
 async function handleOnboardingCallback(ctx: any, state: OnboardingState, data: string): Promise<void> {
-  await answerCb(ctx, '$1');
+  await answerCb(ctx, '');
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────

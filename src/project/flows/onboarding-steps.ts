@@ -9,7 +9,7 @@ import { nextOnboardingStep } from './onboarding-state';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 // ── Step Renderers ────────────────────────────────────────────────────────────
 
@@ -25,7 +25,6 @@ async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> 
     .limit(1);
 
   const projectName = project?.name ?? 'the project';
-  const projectGoal = project?.description ?? '';
 
   await ctx.reply(
     `👋 Welcome to *${projectName}*!\n\n` +
@@ -35,10 +34,9 @@ async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> 
     { parse_mode: 'Markdown' }
   );
 
-  // Move to next step after a short delay
+  // Advance to next step and save — let the caller's dispatcher handle the next renderer
   state.step = nextOnboardingStep(state.step);
   await saveOnboardingState(state);
-  await sendRole(ctx, state);
 }
 
 async function sendRole(ctx: Context, state: OnboardingState): Promise<void> {
@@ -169,17 +167,21 @@ export async function handleOnboardingCallback(
       newState.step = nextOnboardingStep(state.step);
       await saveOnboardingState(newState);
       await handleOnboardingStep(ctx, newState);
-      break;
+      await ctx.answerCallbackQuery('Got it, thanks!');
+      return newState;
 
     case 'style':
       newState.communicationStyle = payload;
       newState.step = nextOnboardingStep(state.step);
+      await ctx.answerCallbackQuery('Perfect!');
+      // Persist all collected profile data to DB before clearing state
+      await finalizeOnboarding(newState);
       await clearOnboardingState(state.telegramId);
       await handleOnboardingStep(ctx, newState);
-      break;
+      return newState;
 
     default:
-      await ctx.answerCallbackQuery();
+      await ctx.answerCallbackQuery('Processing...');
   }
 
   return null;
@@ -246,7 +248,10 @@ export async function finalizeOnboarding(state: OnboardingState): Promise<void> 
   const [member] = await db
     .select()
     .from(members)
-    .where(eq(members.projectId, projectId as any))
+    .where(and(
+      eq(members.projectId, projectId as any),
+      eq(members.userId, userId)
+    ))
     .limit(1);
 
   const projectProfile = {

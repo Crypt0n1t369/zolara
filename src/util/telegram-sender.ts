@@ -123,7 +123,7 @@ export async function sendQuestionDM(
   // Store question state so we can route the response back
   // Per-project Redis key for multi-bot isolation
   try {
-    await redis.setex(`proj:${projectId}:q:${userId}`, 86400, JSON.stringify({
+    await redis.setex(`q:${userId}`, 86400, JSON.stringify({
       questionId,
       roundId,
       projectId,

@@ -6,12 +6,13 @@
  * After this: bot can reach them, they can reach the bot.
  */
 
-import type { ClaimState } from './onboarding-state';
+import type { ClaimState, OnboardingState } from './onboarding-state';
+import { handleOnboardingStep, saveOnboardingState } from './onboarding-steps';
 import type { Context } from 'grammy';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { onboarding } from '../../util/logger';
 
 const CLAIM_TTL = 86400; // 24 hours
@@ -62,18 +63,25 @@ export async function handleClaimCallback(
     await ctx.answerCallbackQuery('Welcome aboard! 🎉');
     await finalizeClaim(state);
     await clearClaimState(state.telegramId);
+
+    // Transition to Phase 2 onboarding (O1-O6)
+    const onboardingState: OnboardingState = {
+      phase: 'onboarding',
+      projectId: state.projectId,
+      telegramId: state.telegramId,
+      step: 'welcome',
+      createdAt: new Date().toISOString(),
+    };
+    await saveOnboardingState(onboardingState);
+
+    // Send "You're in" first, then kick off onboarding
     await ctx.reply(
-      `🎉 *You're in!*\n\n` +
-      `Your commitment is recorded. Here's what happens next:\n\n` +
-      `📅 *When a round starts:*\n` +
-      `I'll DM you a question. Reply with your perspective.\n\n` +
-      `📊 *After the round:*\n` +
-      `A synthesized report goes to your team group.\n` +
-      `Your identity stays private.\n\n` +
-      `Type /status to check if a round is active.\n` +
-      `Type /profile to update your info anytime.`,
+      `🎉 *You're in!*
+
+Your commitment is recorded. Let me learn a bit about you so I can work with you effectively.`,
       { parse_mode: 'Markdown' }
     );
+    await handleOnboardingStep(ctx, onboardingState);
     return;
   }
 
@@ -110,10 +118,14 @@ async function finalizeClaim(state: ClaimState): Promise<void> {
   }
 
   // Upsert member — committed status means bot can now DM them
+  // Filter by BOTH projectId and userId to avoid updating the wrong member
   const [existing] = await db
     .select()
     .from(members)
-    .where(eq(members.projectId, state.projectId as any))
+    .where(and(
+      eq(members.projectId, state.projectId as any),
+      eq(members.userId, userId)
+    ))
     .limit(1);
 
   if (existing) {
