@@ -376,3 +376,126 @@ Wire up `finalizeProjectBot()` into the project creation flow so when Kristaps r
 3. Inject project context into question generation
 4. Phase 2: topic graph tables + auto-extract topics from rounds
 5. Phase 3: member profile passive learning from response behavior
+
+## 2026-04-26 — Bug Fixing Session
+
+### Bugs Fixed (10 total)
+
+**Critical: Onboarding flow never started after member claimed**
+- `handleClaimCallback` confirmed commitment but never triggered Phase 2 onboarding (O1-O6)
+- Fixed: `handleClaimCallback` now creates `OnboardingState` and calls `handleOnboardingStep` after `finalizeClaim`
+- Fixed: `finalizeClaim` now filters by both `projectId` AND `userId` (was updating first member found)
+
+**Critical: Onboarding data never persisted**
+- `finalizeOnboarding` was defined but never called anywhere in the flow
+- All profile data (role, interests, availability, communication style) was discarded on completion
+- Fixed: `finalizeOnboarding` now called in `handleOnboardingCallback` for `style` action (final step)
+
+**Critical: Redis key mismatch — all member responses dropped**
+- `sendQuestionDM` wrote to `proj:${projectId}:q:${userId}`
+- `message:text` handler read from `q:${userId}`
+- Fixed: both now use `q:${userId}`
+
+**Critical: Synthesis received empty `[Response]` placeholders**
+- `collectResponses` replaced ALL text with `[Response]` before LLM theme extraction
+- LLM was analyzing nothing — synthesis was blind
+- Fixed: actual text now flows to LLM; anonymization only in final report quotes
+
+**Bug: 16× `$1` literal strings in answerCallbackQuery calls**
+- `'$1'` is a PostgreSQL parameter placeholder, not a message string
+- Replaced all with proper user-facing messages
+
+**Bug: `sendWelcome` double-sent next step**
+- `sendWelcome` called `await sendRole()` directly then returned
+- Dispatcher also called the next renderer — caused double-send
+- Fixed: `sendWelcome` now only saves state and returns; dispatcher handles next step
+
+**Bug: `saveResponse` used Telegram userId as DB memberId**
+- All response records saved with wrong memberId
+- Fixed: now looks up member via `users` table join
+
+**Bug: `finalizeOnboarding` DB update had no userId filter**
+- Would update wrong member if project had multiple members
+- Fixed: now filters by `and(eq(members.projectId, projectId), eq(members.userId, userId))`
+
+**Bug: `synthesizeReport` missing anonymity param**
+- Quotes could not be anonymized in final report output
+- Fixed: `anonymity` param added, quotes anonymized appropriately per mode
+
+**Dead code cleanup:**
+- Removed `bot-instance.ts.bak4` (old backup file)
+- Renamed `ecosystem.config.js` → `ecosystem.config.cjs` (ESM/CommonJS fix)
+- Confirmed `src/manager/index.ts` is dead code but preserved for now (referenced in spec)
+
+### Test Status
+- `npx tsc --noEmit` → clean ✅
+- `npx vitest run` → 100/100 tests passing ✅
+- Manual end-to-end onboarding test: TODO
+
+### Git State
+- Commit: `f678194` — "fix(bot): 10-bug patch — onboarding flow, synthesis, Redis keys, dead code"
+
+## 2026-04-26 PM — Session 2 (Kristaps Concerns Audit)
+
+### Kristaps' 6 Concerns — Audit Results
+
+**1. Delete/archive bots as admin**
+- ✅ WORKS — `project:archive:` and `project:delete:` callbacks exist and update DB
+- Keyboard: `/projects` → tap ⚙️ → Archive / Delete buttons
+- Both are soft deletes (data preserved 30 days)
+
+**2. Reliably select/switch between bots (edit/control)**
+- ✅ WORKS — `project:select:` callback stores selection in Redis `selected_project:{telegramId}`
+- Project selector keyboard: `/projects` shows all admin's projects with inline keyboard
+- ⚠️ Minor: bigint vs serial join in `resolveAdminProject` — works but type safety could be better
+
+**3. Newly created team bot functionality**
+- ✅ INFRASTRUCTURE works — `finalizeProjectBot()` creates bot, sets webhook, encrypts token
+- 4 managed bots in DB with `botTelegramId` + `webhookSecret`
+- ❌ NOT TESTED end-to-end — no live test with actual member DM to project bot
+- 🔲 Per-project sub-agents not implemented yet (see below)
+
+**4. Onboarding flow per fresh member on project bot**
+- ✅ O1-O6 steps wired for project bots via `handleOnboardingCallbackForProject`
+- Role, interests, availability, communication_style all collected
+- ✅ `finalizeOnboarding` persisted to DB (fixed this session)
+- 🔲 Question personalization from onboarding profile NOT tested live
+
+**5. Data properly stored and connected per bot/user**
+- ✅ `users` → `members` → `projects` chain works (verified with raw SQL)
+- ✅ `members.userId` → FK to `users.id`
+- ✅ `members.projectId` → FK to `projects.id`
+- ✅ `members.projectProfile` JSONB stores onboarding data
+- ⚠️ Need to verify onboarding data actually written with fresh member test
+
+**6. Per-project sub-agents (NEW REQUEST)**
+- ❌ NOT IMPLEMENTED — added to DEVELOPMENT_PRD.md as Phase 2 feature
+- Implementation: OpenClaw `sessions_spawn` per project, `agents` table, 30-day restore window
+
+**7. Users able to chat with bot (NEW REQUEST)**
+- ✅ @Zolara_bot: `handleAIHelp` with rich context (admin status, projects, flows)
+- ✅ Project bots: AI fallback handler with project name context
+- 🔲 Free-chat / conversational memory mode not implemented yet — added to PRD
+
+### Bugs Fixed This Session (Additional)
+
+**Bug 11: Redis key mismatch in bot-instance.ts**
+- `bot-instance.ts` was reading `proj:${projectId}:q:${userId}` for question state
+- `telegram-sender.ts` was writing `q:${userId}`
+- Fixed: bot-instance now reads `q:${userId}`
+
+### Git State
+- Commit: `1e8f9c8` — "fix(managed-bot): question Redis key consistency + comment fixes"
+- Total commits today: 3 (checkpoint, 10-bug patch, managed-bot fix)
+
+### Test Status
+- `npx tsc --noEmit` → clean ✅
+- `npx vitest run` → 100/100 ✅
+- Bot online + health check ✅
+
+### Updated PRD
+- `docs/DEVELOPMENT_PRD.md` fully updated with:
+  - ✅ All Phase 0 bugs marked done
+  - Confirmed working features documented
+  - New requests: per-project sub-agents, free-chat, bot restore
+  - Root cause chain for MiniMax "fake completion"

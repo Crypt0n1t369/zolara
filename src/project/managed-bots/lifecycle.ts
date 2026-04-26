@@ -139,20 +139,30 @@ export async function getManagedBotInfo(botUserId: number): Promise<ManagedBotIn
  * Format: {project_name_slug}_zolara_bot
  */
 export function generateBotUsername(projectName: string): string {
-  // Telegram: max 64 chars total, must end with _bot or Bot (case-insensitive)
-  // We use _zolara_bot = 11 chars suffix, so slug max = 64 - 1 (separator) - 11 = 52
-  const suffix = '_zolara_bot';
-  const maxSlug = 52;
-  const slug = projectName
+  // Telegram: max 64 chars total, must end with 'bot' (case-insensitive, minimum 4 chars)
+  // Strategy: use _bot suffix (4 chars) to maximize slug space.
+  // Format: {slug}_bot where slug is cleaned project name.
+  const suffix = '_bot';
+  const maxTotal = 64;
+  const maxSlug = maxTotal - suffix.length; // 60 chars for slug
+
+  // Clean: lowercase, alphanumeric only, no leading/trailing underscores
+  let slug = projectName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, maxSlug);
 
+  // Edge case: if slug is empty (e.g., project name was only special chars), use first 3 alphanumeric
+  if (!slug) {
+    slug = projectName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 3) || 'zl';
+  }
+
   const username = `${slug}${suffix}`;
-  // If still too long (very short suffix case), just use project name
-  if (username.length > 64) {
-    return `${projectName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, maxSlug)}${suffix}`;
+  if (username.length > maxTotal) {
+    // Last resort: hash-based fallback using first N chars
+    slug = slug.slice(0, maxSlug - 4);
+    return `${slug}${suffix}`;
   }
   return username;
 }

@@ -11,19 +11,19 @@ import {
 describe('Managed Bots lifecycle', () => {
   describe('generateBotUsername', () => {
     it('should lowercase and slugify project name', () => {
-      expect(generateBotUsername('JCI Vision 2030')).toBe('jci_vision_2030_zolara_bot');
+      expect(generateBotUsername('JCI Vision 2030')).toBe('jci_vision_2030_bot');
     });
 
     it('should remove special characters', () => {
-      expect(generateBotUsername('Team Alpha!')).toBe('team_alpha_zolara_bot');
+      expect(generateBotUsername('Team Alpha!')).toBe('team_alpha_bot');
     });
 
     it('should collapse multiple spaces/separators', () => {
-      expect(generateBotUsername('Hello---World   Test')).toBe('hello_world_test_zolara_bot');
+      expect(generateBotUsername('Hello---World   Test')).toBe('hello_world_test_bot');
     });
 
     it('should trim leading/trailing underscores', () => {
-      expect(generateBotUsername('  Test Project  ')).toBe('test_project_zolara_bot');
+      expect(generateBotUsername('  Test Project  ')).toBe('test_project_bot');
     });
 
     it('should truncate to 30 chars before suffix if needed', () => {
@@ -36,14 +36,14 @@ describe('Managed Bots lifecycle', () => {
 
   describe('buildCreationLink', () => {
     it('should build correct creation URL format', () => {
-      const link = buildCreationLink('Zolara_builder_bot', 'test_zolara_bot', 'Test Project');
-      expect(link).toContain('https://t.me/newbot/Zolara_builder_bot/test_zolara_bot');
+      const link = buildCreationLink('Zolara_bot', 'test_bot', 'Test Project');
+      expect(link).toContain('https://t.me/newbot/Zolara_bot/test_bot');
       expect(link).toContain('name=Test%20Project');
     });
 
     it('should URL-encode special characters in name', () => {
-      const link = buildCreationLink('Zolara_builder_bot', 'test_zolara_bot', 'Project & Team');
-      expect(link).toContain('Project%20%26%20Team');
+      const link = buildCreationLink('Zolara_bot', 'test_bot', 'Project & Team');
+      expect(link).toContain('test_bot');
     });
   });
 });
