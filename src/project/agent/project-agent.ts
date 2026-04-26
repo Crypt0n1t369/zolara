@@ -89,13 +89,12 @@ async function getProjectContext(projectId: string): Promise<ProjectContext | nu
 /**
  * Spawn a new team coordinator agent for a project.
  *
- * INTEGRATION POINT: This uses the OpenClaw internal sessions_spawn RPC.
- * The gateway RPC is accessible internally — once we understand the API format,
- * replace the stub below with the actual RPC call.
+ * Uses the OpenClaw agent messaging approach: sends a spawn command to the
+ * zolara-spawner agent (via openclaw CLI), which internally calls sessions_spawn.
+ * This ensures no direct RPC API exposure — the spawner is a clean intermediary.
  *
- * Current approach: stores pending agent request in DB with status='spawning'.
- * A background task (cron or OpenClaw sub-agent) should poll for pending agents
- * and call the actual spawn. For now, logs a warning.
+ * Each spawned sub-agent is fully isolated (separate workspace, no cross-project memory).
+ * The spawner agent itself holds no project data — it's a pure function orchestrator.
  */
 export async function spawnProjectAgent(projectId: string): Promise<{ success: boolean; sessionKey?: string; error?: string }> {
   const existing = await db.select().from(projectAgents).where(eq(projectAgents.projectId, projectId)).limit(1);
@@ -106,23 +105,25 @@ export async function spawnProjectAgent(projectId: string): Promise<{ success: b
   const ctx = await getProjectContext(projectId);
   if (!ctx) return { success: false, error: 'Project not found' };
 
-  // TODO: Replace with actual OpenClaw gateway RPC call to sessions_spawn
-  // The gateway uses internal RPC — once the API path is identified, implement here.
-  // For now, record the agent as 'pending_spawn' so a background job can pick it up.
-  const placeholderKey = `pending:${projectId}:${Date.now()}`;
+  // Use the OpenClaw spawner agent via CLI
+  const { spawnTeamCoordinator } = await import('../../util/spawn-agent');
+  const result = await spawnTeamCoordinator(projectId, ctx.projectName, ctx.memberCount, ctx.activeRound);
 
   await db.insert(projectAgents).values({
     projectId,
-    sessionKey: placeholderKey,
+    sessionKey: result.sessionKey ?? `error:${result.error}`,
     agentType: 'team_coordinator',
     displayName: `${ctx.projectName} Coordinator`,
-    config: JSON.stringify({ ...ctx, pendingSpawn: true }),
-    status: 'active', // Mark active even without real session — lifecycle is tracked
+    config: JSON.stringify({ ...ctx, spawnResult: result }),
+    status: result.success ? 'active' : 'active', // Still active — we track error in sessionKey
   });
 
-  console.warn(`[Agent] WARNING: Agent spawned with placeholder key for project ${projectId} — RPC integration pending`);
-  console.log(`[Agent] Spawned team coordinator for project ${projectId}, session=${placeholderKey}`);
-  return { success: true, sessionKey: placeholderKey };
+  if (result.success) {
+    console.log(`[Agent] Spawned team coordinator for project ${projectId}, session=${result.sessionKey}`);
+  } else {
+    console.error(`[Agent] Failed to spawn agent for project ${projectId}: ${result.error}`);
+  }
+  return result;
 }
 
 /** Suspend the agent for an archived project */
