@@ -123,12 +123,13 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
     }
 
     // Question answering — check Redis for active question
-    const qStateRaw = await redis.get(`proj:${projectId}:q:${userId}`);
+    // Key must match what telegram-sender.ts uses (q:{userId})
+    const qStateRaw = await redis.get(`q:${userId}`);
     if (qStateRaw) {
       const { questionId, roundId } = JSON.parse(qStateRaw) as {
         questionId: string; roundId: string;
       };
-      await redis.del(`proj:${projectId}:q:${userId}`);
+      await redis.del(`q:${userId}`);
       await saveResponseForProject(userId, projectId, roundId, questionId, text);
       await ctx.reply(
         '✅ Received! Your perspective has been recorded.\n\n' +
