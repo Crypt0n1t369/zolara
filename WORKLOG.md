@@ -563,3 +563,26 @@ Current state:
 
 Next:
 - Watch next live validation/round deadline to confirm logs show processing counts > 0 and no duplicate synthesis/report side effects.
+
+## 2026-04-29 02:35 Africa/Cairo — Night shift retry/alert/audit hardening
+
+**Built**
+- Added shared retry helper (`src/util/resilience.ts`) with bounded exponential backoff, retry-after support, and structured retry warnings.
+- Added audit helper (`src/util/audit.ts`) writing operational audit events to `engagement_events` without breaking the caller if audit persistence fails.
+- Hardened MiniMax LLM calls with 45s timeout, 3-attempt retry for network/429/5xx failures, and audit records for generation/parse failures.
+- Hardened Telegram sends with 3-attempt retry for 429/408/5xx/timeout failures, retry-after support, structured alerts, and `telegram_send_failed` audit events for final failures.
+- Added round lifecycle transition auditing via `round_state_transition` events and structured logs; question send failures are tracked as unreachable members and audited.
+- Persisted Telegram message IDs on successfully sent round questions.
+
+**Tested**
+- `npm run build` ✅
+- `npm test` ✅ — 10 files / 111 tests passed
+- Restarted PM2 `zolara` and verified `/health` ✅
+
+**Current state**
+- Main Zolara process is online after restart.
+- Lifecycle worker remains stopped as before.
+
+**Next actions**
+- Add a small smoke test/mocked unit test around retry behavior if this grows beyond minimal hardening.
+- Consider a dedicated audit table later; current minimal implementation reuses `engagement_events`.

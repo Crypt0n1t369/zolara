@@ -23,6 +23,7 @@ import {
   llm as llmLog,
   telegram as telegramLog,
 } from '../util/logger';
+import { auditEvent } from '../util/audit';
 
 export interface RoundContext {
   roundId: string;
@@ -34,6 +35,41 @@ export interface RoundContext {
 }
 
 export type RoundStatus = 'scheduled' | 'gathering' | 'synthesizing' | 'complete' | 'failed' | 'cancelled';
+
+async function updateRoundStatus(
+  roundId: string,
+  projectId: string | null | undefined,
+  fromStatus: string | null | undefined,
+  toStatus: RoundStatus,
+  extra: Partial<typeof rounds.$inferInsert> = {},
+  context: Record<string, unknown> = {}
+): Promise<void> {
+  try {
+    await db
+      .update(rounds)
+      .set({ ...extra, status: toStatus })
+      .where(eq(rounds.id, roundId));
+
+    await auditEvent('round_state_transition', {
+      roundId,
+      fromStatus: fromStatus ?? 'unknown',
+      toStatus,
+      ...context,
+    }, projectId ?? null);
+
+    logger.info({
+      msg: '[RoundManager] state transition',
+      roundId,
+      projectId,
+      fromStatus: fromStatus ?? 'unknown',
+      toStatus,
+      ...context,
+    });
+  } catch (err) {
+    roundLog.stateTransitionFailed(fromStatus ?? 'unknown', toStatus, { roundId, projectId: projectId ?? undefined, ...context }, err);
+    throw err;
+  }
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -141,10 +177,7 @@ export async function cancelRound(roundId: string): Promise<void> {
     throw new Error(`Cannot cancel round in ${currentStatus} state`);
   }
 
-  await db
-    .update(rounds)
-    .set({ status: 'cancelled' })
-    .where(eq(rounds.id, roundId));
+  await updateRoundStatus(roundId, round.projectId, currentStatus, 'cancelled', {}, { reason: 'admin_cancel' });
 }
 
 // ── State Transitions ─────────────────────────────────────────────────────────
@@ -187,10 +220,7 @@ async function transitionToGathering(
     roundLog.stateTransitionFailed('GATHERING', 'FAILED', { projectId, roundId }, err);
     // Mark as failed
     try {
-      await db
-        .update(rounds)
-        .set({ status: 'failed', errorMessage: 'Question generation failed' })
-        .where(eq(rounds.id, roundId));
+      await updateRoundStatus(roundId, projectId, 'gathering', 'failed', { errorMessage: 'Question generation failed' }, { phase: 'question_generation' });
     } catch (dbErr) {
       dbLog.updateFailed('rounds', { roundId }, dbErr);
     }
@@ -198,6 +228,7 @@ async function transitionToGathering(
   }
 
   // Store and send questions to each member
+  const unreachableMemberIds: number[] = [];
   for (const member of validMembers) {
     if (member.userId === null) continue;
 
@@ -222,14 +253,24 @@ async function transitionToGathering(
       .returning();
 
     // Send to member via Telegram
-    await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId, topic);
+    const telegramMessageId = await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId, topic);
+    if (telegramMessageId) {
+      await db
+        .update(questions)
+        .set({ telegramMessageId })
+        .where(eq(questions.id, storedQuestion.id));
+    } else {
+      unreachableMemberIds.push(member.id);
+    }
+  }
+
+  if (unreachableMemberIds.length > 0) {
+    roundLog.memberUnreachable(roundId, unreachableMemberIds.length, unreachableMemberIds.join(','), { projectId, roundId });
+    await auditEvent('round_member_unreachable', { roundId, memberIds: unreachableMemberIds }, projectId);
   }
 
   // Update round status
-  await db
-    .update(rounds)
-    .set({ status: 'gathering', startedAt: new Date() })
-    .where(eq(rounds.id, roundId));
+  await updateRoundStatus(roundId, projectId, 'scheduled', 'gathering', { startedAt: new Date() }, { sentQuestions: validMembers.length - unreachableMemberIds.length, unreachableMembers: unreachableMemberIds.length });
 }
 
 /**
@@ -295,10 +336,7 @@ async function transitionToSynthesizing(roundId: string): Promise<void> {
       ? 'Round cancelled — no responses received.'
       : `Only ${responseCount} perspective received. Minimum 2 required.`;
 
-    await db
-      .update(rounds)
-      .set({ status: 'cancelled' })
-      .where(eq(rounds.id, roundId));
+    await updateRoundStatus(roundId, round.projectId, round.status, 'cancelled', {}, { reason: 'insufficient_responses', responseCount });
 
     throw new Error(`Round cancelled: ${message}`);
   }
@@ -308,25 +346,24 @@ async function transitionToSynthesizing(roundId: string): Promise<void> {
     console.warn(`[RoundManager] Round ${roundId} proceeding with low response rate: ${responseCount}/${memberCount}`);
   }
 
-  await db
-    .update(rounds)
-    .set({ status: 'synthesizing' })
-    .where(eq(rounds.id, roundId));
+  await updateRoundStatus(roundId, round.projectId, round.status, 'synthesizing', {}, { responseCount, memberCount });
 }
 
 async function transitionToComplete(
   roundId: string,
   reportData: Record<string, unknown>
 ): Promise<void> {
-  await db
-    .update(rounds)
-    .set({
-      status: 'complete',
-      completedAt: new Date(),
-      convergenceScore: String(reportData['convergenceScore'] ?? ''),
-      convergenceTier: reportData['convergenceTier'] as string,
-    })
-    .where(eq(rounds.id, roundId));
+  const [round] = await db
+    .select({ projectId: rounds.projectId, status: rounds.status })
+    .from(rounds)
+    .where(eq(rounds.id, roundId))
+    .limit(1);
+
+  await updateRoundStatus(roundId, round?.projectId, round?.status, 'complete', {
+    completedAt: new Date(),
+    convergenceScore: String(reportData['convergenceScore'] ?? ''),
+    convergenceTier: reportData['convergenceTier'] as string,
+  }, { convergenceScore: reportData['convergenceScore'], convergenceTier: reportData['convergenceTier'] });
 }
 
 // ── Deadline Checking (called by cron) ────────────────────────────────────────
@@ -463,14 +500,10 @@ export async function processRoundCompletion(roundId: string, projectId: string)
     roundLog.synthesisFailed(roundId, { projectId }, err);
 
     try {
-      await db
-        .update(rounds)
-        .set({
-          status: 'failed',
-          errorMessage: err instanceof Error ? err.message : 'Synthesis failed',
-          retryCount: (round.retryCount ?? 0) + 1,
-        })
-        .where(eq(rounds.id, roundId));
+      await updateRoundStatus(roundId, projectId, round.status, 'failed', {
+        errorMessage: err instanceof Error ? err.message : 'Synthesis failed',
+        retryCount: (round.retryCount ?? 0) + 1,
+      }, { phase: 'synthesis', retryCount: (round.retryCount ?? 0) + 1 });
     } catch (dbErr) {
       dbLog.updateFailed('rounds', { roundId }, dbErr);
     }

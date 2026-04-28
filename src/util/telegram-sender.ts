@@ -18,6 +18,8 @@ import { eq } from 'drizzle-orm';
 import { redis } from '../data/redis';
 import { decrypt } from './crypto';
 import { telegram, redis as redisLog } from './logger';
+import { auditEvent } from './audit';
+import { withRetry } from './resilience';
 
 // Per-project bot instances (cached)
 const projectBotCache = new Map<string, Bot>();
@@ -86,19 +88,40 @@ export async function sendMessage(
 ): Promise<number | null> {
   const bot = projectId ? await getProjectBot(projectId) : getZolaraBot();
   try {
-    const sent = await bot.api.sendMessage(chatId, text, {
-      parse_mode: options?.parseMode ?? 'Markdown',
-      reply_to_message_id: options?.replyToMessageId,
-      reply_markup: options?.replyMarkup as never,
-    });
+    const sent = await withRetry(
+      'telegram.sendMessage',
+      () => bot.api.sendMessage(chatId, text, {
+        parse_mode: options?.parseMode ?? 'Markdown',
+        reply_to_message_id: options?.replyToMessageId,
+        reply_markup: options?.replyMarkup as never,
+      }),
+      {
+        attempts: 3,
+        baseDelayMs: 700,
+        maxDelayMs: 8_000,
+        context: { chatId, projectId },
+        retryAfterMs: (err) => {
+          const retryAfter = (err as { parameters?: { retry_after?: number } })?.parameters?.retry_after;
+          return retryAfter ? retryAfter * 1000 : undefined;
+        },
+        shouldRetry: (err) => {
+          const errorCode = (err as { error_code?: number })?.error_code;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes('chat not found') || msg.includes('user not found') || msg.includes('Bot was blocked by the user')) return false;
+          return errorCode === 429 || errorCode === 408 || (typeof errorCode === 'number' && errorCode >= 500) || msg.toLowerCase().includes('timeout');
+        },
+        onRetry: (err, attempt) => telegram.apiError(`sendMessage attempt ${attempt} failed; retrying`, { chatId, projectId }, err),
+      }
+    );
     return sent.message_id;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('chat not found') || msg.includes('user not found') || msg.includes('Bot was blocked by the user')) {
-      telegram.sendFailed(`User has not started bot or blocked it: ${chatId}`, { chatId }, err);
-      return null;
+      telegram.sendFailed(`User has not started bot or blocked it: ${chatId}`, { chatId, projectId }, err);
+    } else {
+      telegram.sendFailed(`Failed to send message to ${chatId}`, { chatId, projectId }, err);
     }
-    telegram.sendFailed(`Failed to send message to ${chatId}`, { chatId }, err);
+    await auditEvent('telegram_send_failed', { chatId, error: msg, textLength: text.length }, projectId);
     return null;
   }
 }

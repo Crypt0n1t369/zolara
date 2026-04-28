@@ -1,6 +1,18 @@
 import { config } from '../../config';
 import { llm as llmLog } from '../../util/logger';
+import { auditEvent } from '../../util/audit';
+import { withRetry } from '../../util/resilience';
 const MINIMAX_API_URL = 'https://api.minimax.io/v1/chat/completions';
+const LLM_TIMEOUT_MS = 45_000;
+class MiniMaxHttpError extends Error {
+    status;
+    retryAfterMs;
+    constructor(message, status, retryAfterMs) {
+        super(message);
+        this.status = status;
+        this.retryAfterMs = retryAfterMs;
+    }
+}
 /**
  * Some reasoning models may return hidden chain-of-thought inside <think> tags.
  * Never surface that to Telegram users; keep only the final answer.
@@ -38,38 +50,64 @@ export class MiniMaxProvider {
         if (params.responseFormat === 'json') {
             body.response_format = { type: 'json_object' };
         }
-        let response;
-        try {
-            response = await fetch(MINIMAX_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${this.apiKey}`,
-                },
-                body: JSON.stringify(body),
+        const response = await withRetry('minimax.generate', async () => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+            try {
+                const res = await fetch(MINIMAX_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${this.apiKey}`,
+                    },
+                    body: JSON.stringify(body),
+                    signal: controller.signal,
+                });
+                if (!res.ok) {
+                    const retryAfter = Number(res.headers.get('retry-after'));
+                    const retryAfterMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined;
+                    const errorText = await res.text().catch(() => '');
+                    throw new MiniMaxHttpError(`MiniMax HTTP ${res.status}: ${errorText.slice(0, 300)}`, res.status, retryAfterMs);
+                }
+                return res;
+            }
+            finally {
+                clearTimeout(timeout);
+            }
+        }, {
+            attempts: 3,
+            context: { model },
+            retryAfterMs: (err) => (err instanceof MiniMaxHttpError ? err.retryAfterMs : undefined),
+            onRetry: (err, attempt) => llmLog.apiError(`MiniMax call failed on attempt ${attempt}; retrying`, { model, attempt }, err),
+        }).catch(async (err) => {
+            llmLog.apiError(`MiniMax request failed after retries: ${err.message}`, { model }, err);
+            await auditEvent('llm_generation_failed', {
+                provider: 'minimax',
+                model,
+                error: err instanceof Error ? err.message : String(err),
             });
-        }
-        catch (err) {
-            llmLog.apiError(`Network fetch failed: ${err.message}`, { model }, err);
             throw err;
-        }
+        });
         let data;
         try {
             data = await response.json();
         }
         catch (err) {
             llmLog.parseFailed('Response JSON parse failed', { model }, err);
+            await auditEvent('llm_response_parse_failed', { provider: 'minimax', model, error: err.message });
             throw err;
         }
         // Check for API-level errors
         if (data.base_resp && data.base_resp.status_code !== 0) {
             const msg = `MiniMax API error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`;
             llmLog.apiError(msg, { model });
+            await auditEvent('llm_generation_failed', { provider: 'minimax', model, error: msg });
             throw new Error(msg);
         }
         if (data.error) {
             const msg = `MiniMax API error ${data.error.http_code}: ${data.error.message}`;
             llmLog.apiError(msg, { model });
+            await auditEvent('llm_generation_failed', { provider: 'minimax', model, error: msg });
             throw new Error(msg);
         }
         const text = stripThinkingTags(data.choices?.[0]?.message?.content ?? '');
@@ -86,6 +124,7 @@ export class MiniMaxProvider {
                     }
                     catch {
                         llmLog.parseFailed('JSON response parse failed, tried markdown extraction too', { model });
+                        await auditEvent('llm_response_parse_failed', { provider: 'minimax', model, responseFormat: params.responseFormat });
                     }
                 }
             }
