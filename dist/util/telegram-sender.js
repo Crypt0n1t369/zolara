@@ -84,9 +84,12 @@ export async function sendMessage(chatId, text, options, projectId) {
  * Send a question to a member via DM.
  * Uses the project's own bot for multi-bot routing.
  */
-export async function sendQuestionDM(projectId, userId, questionText, roundNumber, questionId, roundId) {
-    const message = `🌀 *Round ${roundNumber} - Your Perspective*\n\n` +
+export async function sendQuestionDM(projectId, userId, questionText, roundNumber, questionId, roundId, topic) {
+    const topicText = topic ? `Topic: *${topic}*\n\n` : '';
+    const message = `🌀 *Round ${roundNumber} — Your Perspective*\n\n` +
+        topicText +
         `${questionText}\n\n` +
+        `Why I’m asking: your answer helps the group see different perspectives before Zolara writes the synthesis.\n\n` +
         `Reply to this message with your answer. All responses are anonymous in the final report.`;
     // Store question state so we can route the response back
     // Per-project Redis key for multi-bot isolation

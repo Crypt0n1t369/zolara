@@ -17,7 +17,7 @@ import { llm } from '../../engine/llm/minimax';
 import { config } from '../../config';
 import { db } from '../../data/db';
 import { projects, members, users, rounds, questions, responses, engagementEvents } from '../../data/schema/projects';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { redis } from '../../data/redis';
 import { sendMessage, sendQuestionDM } from '../../util/telegram-sender';
 import { triggerRound, cancelRound } from '../../engine/round-manager';
@@ -76,6 +76,50 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
       '3. Answer questions when a round is active\n' +
       '4. React to synthesis reports in your group\n\n' +
       'Questions? Ask your admin or type them here.',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+
+
+  // /my_status — concise personal state for members
+  bot.command('my_status', async (ctx) => {
+    const userId = ctx.from!.id;
+
+    const [user] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.telegramId, userId))
+      .limit(1);
+
+    const [member] = user
+      ? await db
+        .select({ onboardingStatus: members.onboardingStatus, role: members.role, projectProfile: members.projectProfile })
+        .from(members)
+        .where(and(eq(members.projectId, projectId), eq(members.userId, user.id)))
+        .limit(1)
+      : [];
+
+    const qStateRaw = await redis.get(`q:${userId}`);
+    const [round] = await db
+      .select({ roundNumber: rounds.roundNumber, status: rounds.status, topic: rounds.topic, responseCount: rounds.responseCount, memberCount: rounds.memberCount })
+      .from(rounds)
+      .where(eq(rounds.projectId, projectId))
+      .orderBy(desc(rounds.startedAt))
+      .limit(1);
+
+    const onboarding = member?.onboardingStatus === 'complete' ? '✅ Complete' : '⏳ Not complete';
+    const activeQuestion = qStateRaw ? '✅ Waiting for your answer' : '— None right now';
+    const roundText = round
+      ? `#${round.roundNumber} — ${round.status ?? 'unknown'}\nTopic: ${round.topic ?? '—'}\nResponses: ${round.responseCount ?? 0}/${round.memberCount ?? 0}`
+      : 'No round yet';
+
+    await ctx.reply(
+      `*Your Zolara status*\n\n` +
+      `Onboarding: ${onboarding}\n` +
+      `Role: ${member?.role ?? '—'}\n` +
+      `Active question: ${activeQuestion}\n\n` +
+      `*Latest round*\n${roundText}`,
       { parse_mode: 'Markdown' }
     );
   });

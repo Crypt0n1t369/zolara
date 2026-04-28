@@ -222,7 +222,7 @@ async function transitionToGathering(
       .returning();
 
     // Send to member via Telegram
-    await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId);
+    await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId, topic);
   }
 
   // Update round status
@@ -483,7 +483,8 @@ async function sendQuestionToMember(
   questionText: string,
   roundNumber: number,
   questionId: string,
-  roundId: string
+  roundId: string,
+  topic?: string | null
 ): Promise<number | null> {
   // members.userId is the internal DB users.id; Telegram DMs need users.telegramId.
   const [user] = await db
@@ -497,7 +498,7 @@ async function sendQuestionToMember(
     return null;
   }
 
-  return sendQuestionDM(projectId, user.telegramId, questionText, roundNumber, questionId, roundId);
+  return sendQuestionDM(projectId, user.telegramId, questionText, roundNumber, questionId, roundId, topic);
 }
 
 async function postReportToGroup(

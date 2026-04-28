@@ -113,11 +113,15 @@ export async function sendQuestionDM(
   questionText: string,
   roundNumber: number,
   questionId: string,
-  roundId: string
+  roundId: string,
+  topic?: string | null
 ): Promise<number | null> {
+  const topicText = topic ? `Topic: *${topic}*\n\n` : '';
   const message =
-    `🌀 *Round ${roundNumber} - Your Perspective*\n\n` +
+    `🌀 *Round ${roundNumber} — Your Perspective*\n\n` +
+    topicText +
     `${questionText}\n\n` +
+    `Why I’m asking: your answer helps the group see different perspectives before Zolara writes the synthesis.\n\n` +
     `Reply to this message with your answer. All responses are anonymous in the final report.`;
 
   // Store question state so we can route the response back

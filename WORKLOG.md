@@ -350,3 +350,28 @@ Verified:
 - `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
 - Restarted PM2 `zolara`; `/health` returns OK.
 - PM2 services are online: cloudflared, zolara, zolara-spawner.
+
+## 2026-04-28 — Round 3 Start + Bounded Dev Cron + Next Phase Plan
+
+### Built / Fixed
+- Started Round 3 first-round experience improvements:
+  - Question DMs now include the topic context.
+  - Question DMs explain why the member is being asked.
+  - Added `/my_status` to project bots so members can see onboarding status, active question status, and latest round state.
+- Added `docs/NEXT_PHASE_PLAN.md` with a reprioritized modular plan for flow completeness, refinement loop, lifecycle workers, backend modularity, and UX scalability.
+- Added bounded cron runner: `scripts/dev-round-cron.sh`.
+  - Runs build/test/health checks.
+  - Dispatches the remaining planned dev round via `openclaw agent` only if the source tree is clean.
+  - Uses `/tmp/zolara-dev-round-state.json` to stop after Round 4.
+- Scheduled cron: `17 */6 * * * /home/drg/projects/zolara/scripts/dev-round-cron.sh`.
+
+### Verified
+- `npm run build` passes.
+- `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
+- Restarted PM2 `zolara`; `/health` returns OK.
+- PM2 services online: cloudflared, zolara, zolara-spawner.
+
+### Current State
+- Rounds 1–2 are complete and pushed.
+- Round 3 is started with member-facing improvements.
+- Cron is scheduled to dispatch Round 4 admin clarity work in a bounded way.

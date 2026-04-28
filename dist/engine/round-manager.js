@@ -150,7 +150,7 @@ async function transitionToGathering(roundId, projectId, roundNumber, topic, mem
         })
             .returning();
         // Send to member via Telegram
-        await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId);
+        await sendQuestionToMember(projectId, member.userId, personalizedQ.text, roundNumber, storedQuestion.id, roundId, topic);
     }
     // Update round status
     await db
@@ -365,7 +365,7 @@ function getCycleDuration(cycleFrequency) {
     };
     return durations[cycleFrequency] ?? 48;
 }
-async function sendQuestionToMember(projectId, userId, questionText, roundNumber, questionId, roundId) {
+async function sendQuestionToMember(projectId, userId, questionText, roundNumber, questionId, roundId, topic) {
     // members.userId is the internal DB users.id; Telegram DMs need users.telegramId.
     const [user] = await db
         .select({ telegramId: users.telegramId })
@@ -376,7 +376,7 @@ async function sendQuestionToMember(projectId, userId, questionText, roundNumber
         telegramLog.sendFailed('Cannot send question: member has no Telegram ID', { projectId, userId });
         return null;
     }
-    return sendQuestionDM(projectId, user.telegramId, questionText, roundNumber, questionId, roundId);
+    return sendQuestionDM(projectId, user.telegramId, questionText, roundNumber, questionId, roundId, topic);
 }
 async function postReportToGroup(projectId, groupId, reportData, roundNumber, responseCount, memberCount) {
     return postReportToGroupChat(projectId, groupId, reportData, roundNumber, responseCount, memberCount);
