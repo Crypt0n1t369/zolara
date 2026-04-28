@@ -330,3 +330,23 @@ Verified:
 - Restarted PM2 services after PM2 lost its process list; `cloudflared`, `zolara`, and `zolara-spawner` are online.
 - `/health` returns OK.
 - Project bot webhooks re-registered on the current Cloudflare tunnel.
+
+## 2026-04-28 — Validation Clarification Loop UX
+
+### Built / Fixed
+- Improved validation completion copy so members see exactly why a topic passed or needs work:
+  - Shows Clear votes vs strict-majority threshold.
+  - Explains that the round starts only after Clear majority.
+- Wired `needs_work` into an actionable clarification notification:
+  - Generates 2–3 clarifying questions via MiniMax.
+  - Suggests a clearer rewritten topic when possible.
+  - Sends the clarification prompt to the project group(s) and admin.
+  - Tells the admin/team to rewrite and re-run with `/startround <clearer topic>`.
+- Changed clarification generation so it no longer silently resets validation back to voting. The failed validation remains `needs_work` until a new clearer topic is started.
+- Fixed validation deadline query from `gte(deadline, now)` to `lte(deadline, now)` so only expired validations are picked up.
+
+### Verified
+- `npm run build` passes.
+- `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
+- Restarted PM2 `zolara`; `/health` returns OK.
+- PM2 services are online: cloudflared, zolara, zolara-spawner.

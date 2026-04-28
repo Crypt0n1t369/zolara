@@ -16,12 +16,13 @@
  *
  * Phase flag: PHASE_PROBLEM_DEF (default 'disabled')
  */
-import { eq, and, desc, gte } from 'drizzle-orm';
+import { eq, and, desc, lte } from 'drizzle-orm';
 import { db } from '../../../data/db';
-import { rounds, projects, members, users, problemDefinitions, problemDefinitionVotes, } from '../../../data/schema/projects';
+import { rounds, projects, members, users, admins, problemDefinitions, problemDefinitionVotes, } from '../../../data/schema/projects';
 import { isPhaseActive } from '../flags';
 import { startScheduledRound, triggerRound } from '../../round-manager';
 import { sendValidationDM } from './telegram-ui';
+import { sendMessage } from '../../../util/telegram-sender';
 import { llm } from '../../llm/minimax';
 import { round as roundLog } from '../../../util/logger';
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -226,7 +227,6 @@ export async function tallyVotes(problemDefinitionId) {
         : 0;
     // Determine outcome
     let status;
-    const clearRate = voteSummary.total > 0 ? voteSummary.clear / voteSummary.total : 0;
     if (voteSummary.clear > voteSummary.total / 2 && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
         status = 'confirmed';
     }
@@ -250,6 +250,14 @@ export async function tallyVotes(problemDefinitionId) {
     if (status === 'confirmed' && def.roundId && def.projectId) {
         await startScheduledRound(def.roundId, def.projectId);
         roundId = def.roundId;
+    }
+    else if (status === 'needs_work') {
+        try {
+            await sendClarificationToStakeholders(problemDefinitionId);
+        }
+        catch (err) {
+            roundLog.stateTransitionFailed('VALIDATION', 'NEEDS_WORK_NOTIFY', { problemDefinitionId }, err);
+        }
     }
     roundLog.validationComplete({
         problemDefinitionId,
@@ -289,8 +297,10 @@ ${voteSummaryText(await db
         .limit(100))}
 
 Generate 2-3 specific clarifying questions that would help the team define this problem more clearly.
-Output as JSON: { "questions": ["question 1", "question 2", "question 3"] }`;
+Also suggest 1 clearer rewritten topic the admin could use for a re-run.
+Output as JSON: { "questions": ["question 1", "question 2", "question 3"], "suggestedTopic": "clearer topic" }`;
     let questions = [];
+    let suggestedTopic = null;
     try {
         const result = await llm.generate({
             systemPrompt: 'You are a helpful assistant that generates clarifying questions. Output JSON only.',
@@ -299,7 +309,9 @@ Output as JSON: { "questions": ["question 1", "question 2", "question 3"] }`;
             maxTokens: 512,
             responseFormat: 'json',
         });
-        questions = result.parsed.questions ?? [];
+        const parsed = result.parsed;
+        questions = parsed?.questions ?? [];
+        suggestedTopic = parsed?.suggestedTopic?.trim() || null;
     }
     catch {
         questions = [
@@ -308,17 +320,78 @@ Output as JSON: { "questions": ["question 1", "question 2", "question 3"] }`;
             'What would a successful outcome look like?',
         ];
     }
-    // Increment clarification round
+    // Increment clarification round, but keep the validation in needs_work.
+    // A new validation should only start after the admin/team rewrites the topic.
     await db
         .update(problemDefinitions)
         .set({
         clarificationRound: (def.clarificationRound ?? 0) + 1,
-        status: 'voting',
-        votesReceived: 0,
+        refinedText: suggestedTopic,
         updatedAt: new Date(),
     })
         .where(eq(problemDefinitions.id, problemDefinitionId));
-    return { questions, revalidated: true };
+    return { questions, suggestedTopic };
+}
+/**
+ * Notify the group/admin when validation ends in needs_work.
+ * This turns Refine/Unsure votes into an actionable clarification step.
+ */
+async function sendClarificationToStakeholders(problemDefinitionId) {
+    const [def] = await db
+        .select()
+        .from(problemDefinitions)
+        .where(eq(problemDefinitions.id, problemDefinitionId))
+        .limit(1);
+    if (!def?.projectId)
+        return;
+    const [project] = await db
+        .select({
+        name: projects.name,
+        groupIds: projects.groupIds,
+        adminId: projects.adminId,
+    })
+        .from(projects)
+        .where(eq(projects.id, def.projectId))
+        .limit(1);
+    const votes = await db
+        .select()
+        .from(problemDefinitionVotes)
+        .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
+        .limit(100);
+    const clear = votes.filter((v) => v.vote === 'clear').length;
+    const refine = votes.filter((v) => v.vote === 'refine').length;
+    const unsure = votes.filter((v) => v.vote === 'unsure').length;
+    const clarification = await runClarification(problemDefinitionId);
+    const questionsText = clarification.questions.length > 0
+        ? clarification.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')
+        : '1. What exactly should this round help the team decide or understand?\n2. Who is affected, and what context is missing?';
+    const suggested = clarification.suggestedTopic
+        ? `\n\nSuggested clearer topic:\n“${clarification.suggestedTopic}”`
+        : '';
+    const message = `⚠️ Topic needs clarification before the round starts.\n\n` +
+        `Project: ${project?.name ?? 'Zolara project'}\n` +
+        `Original topic: “${def.topicText}”\n\n` +
+        `Vote result: ✅ Clear ${clear} / ⚠️ Refine ${refine} / ❓ Unsure ${unsure}.\n` +
+        `Clear did not reach a strict majority, so Zolara will not start the round yet.\n\n` +
+        `Use these prompts to sharpen the topic:\n${questionsText}${suggested}\n\n` +
+        `Next step: rewrite the topic and start a new validation with /startround <clearer topic>.`;
+    const targets = new Set();
+    for (const groupId of project?.groupIds ?? []) {
+        if (typeof groupId === 'number')
+            targets.add(groupId);
+    }
+    if (project?.adminId) {
+        const [admin] = await db
+            .select({ telegramId: admins.telegramId })
+            .from(admins)
+            .where(eq(admins.id, project.adminId))
+            .limit(1);
+        if (admin?.telegramId)
+            targets.add(admin.telegramId);
+    }
+    for (const target of targets) {
+        await sendMessage(target, message, { parseMode: 'Markdown' }, def.projectId);
+    }
 }
 // ── Helpers ────────────────────────────────────────────────────────────────────
 async function voteSummaryText(votes) {
@@ -336,8 +409,7 @@ export async function checkValidationDeadlines() {
     const expiredValidations = await db
         .select()
         .from(problemDefinitions)
-        .where(and(eq(problemDefinitions.status, 'voting'), gte(problemDefinitions.voteDeadline, now) // intentionally gte to catch past ones
-    ))
+        .where(and(eq(problemDefinitions.status, 'voting'), lte(problemDefinitions.voteDeadline, now)))
         .limit(100);
     // Filter for actually expired ones
     for (const def of expiredValidations) {

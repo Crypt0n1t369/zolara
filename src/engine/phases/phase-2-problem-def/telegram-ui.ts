@@ -220,9 +220,12 @@ function formatTallyResult(result: {
     rejected: '❌',
   }[status] ?? '❓';
 
+  const majorityNeeded = Math.floor(total / 2) + 1;
   const statusText = {
-    confirmed: 'Problem is clearly defined — round is starting!',
-    needs_work: 'Problem needs clarification — clarification round coming.',
+    confirmed:
+      `Confirmed because ✅ Clear reached a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). The round is starting now.`,
+    needs_work:
+      `Needs clarification because ✅ Clear did not reach a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). I’ll send the admin/team clarification prompts next.`,
     rejected: 'Problem could not be validated — admin notified.',
   }[status] ?? 'Unknown status';
 
@@ -257,11 +260,11 @@ export async function sendClarificationToGroup(
     .join('\n');
 
   const message =
-    `⚠️ *Problem Needs Clarification*\n\n` +
-    `The topic *"${topic}"* needs clarification before we can proceed.\n\n` +
+    `⚠️ <b>Problem Needs Clarification</b>\n\n` +
+    `The topic <b>"${escapeHtml(topic)}"</b> needs clarification before we can proceed.\n\n` +
     `Please discuss and refine the problem definition:\n\n` +
     `${questionsText}\n\n` +
-    `When you're ready, tap *Proceed* to re-run the validation.`;
+    `When you're ready, rewrite the topic and start a new validation with /startround.`;
 
   await sendMessage(groupId, message, {
     parseMode: 'HTML',
