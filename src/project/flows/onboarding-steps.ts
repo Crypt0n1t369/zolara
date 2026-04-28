@@ -5,7 +5,7 @@
 
 import type { OnboardingState, OnboardingStep } from './onboarding-state';
 import type { Context } from 'grammy';
-import { currentlyAnsweringLabel, nextOnboardingStep, prevOnboardingStep } from './onboarding-state';
+import { currentlyAnsweringLabel, nextOnboardingStep, prevOnboardingStep, onboardingStepLabel } from './onboarding-state';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
@@ -15,7 +15,7 @@ import { eq, and } from 'drizzle-orm';
 
 function controlRow(step: OnboardingStep): Array<{ text: string; callback_data: string }> {
   const row: Array<{ text: string; callback_data: string }> = [];
-  if (step !== 'role') row.push({ text: '← Back', callback_data: 'onboard:back' });
+  if (step !== 'role') row.push({ text: '← Back', callback_data: `onboard:back:${step}` });
   row.push({ text: 'Skip for now', callback_data: `onboard:skip:${step}` });
   return row;
 }
@@ -113,15 +113,15 @@ async function sendAvailability(ctx: Context, state: OnboardingState): Promise<v
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '< 1 hour', callback_data: 'onboard:availability:<_1_hr' },
-            { text: '1-3 hours', callback_data: 'onboard:availability:1-3_hrs' },
+            { text: '< 1 hour', callback_data: 'onboard:availability:availability:<_1_hr' },
+            { text: '1-3 hours', callback_data: 'onboard:availability:availability:1-3_hrs' },
           ],
           [
-            { text: '3-5 hours', callback_data: 'onboard:availability:3-5_hrs' },
-            { text: '5+ hours', callback_data: 'onboard:availability:5+_hrs' },
+            { text: '3-5 hours', callback_data: 'onboard:availability:availability:3-5_hrs' },
+            { text: '5+ hours', callback_data: 'onboard:availability:availability:5+_hrs' },
           ],
           [
-            { text: 'Not sure yet', callback_data: 'onboard:availability:not_sure' },
+            { text: 'Not sure yet', callback_data: 'onboard:availability:availability:not_sure' },
           ],
           controlRow('availability'),
         ],
@@ -139,11 +139,11 @@ async function sendCommunicationStyle(ctx: Context, state: OnboardingState): Pro
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '💨 Quick & punchy', callback_data: 'onboard:style:quick' },
-            { text: '📝 Thoughtful & detailed', callback_data: 'onboard:style:detailed' },
+            { text: '💨 Quick & punchy', callback_data: 'onboard:style:communication_style:quick' },
+            { text: '📝 Thoughtful & detailed', callback_data: 'onboard:style:communication_style:detailed' },
           ],
           [
-            { text: '🎲 Surprise me', callback_data: 'onboard:style:surprise' },
+            { text: '🎲 Surprise me', callback_data: 'onboard:style:communication_style:surprise' },
           ],
           controlRow('communication_style'),
         ],
@@ -164,14 +164,14 @@ async function sendReview(ctx: Context, state: OnboardingState): Promise<void> {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '✅ Looks right', callback_data: 'onboard:confirm' }],
+          [{ text: '✅ Looks right', callback_data: 'onboard:confirm:review' }],
           [
-            { text: 'Edit role', callback_data: 'onboard:edit:role' },
-            { text: 'Edit interests', callback_data: 'onboard:edit:interests' },
+            { text: 'Edit role', callback_data: 'onboard:edit:review:role' },
+            { text: 'Edit interests', callback_data: 'onboard:edit:review:interests' },
           ],
           [
-            { text: 'Edit availability', callback_data: 'onboard:edit:availability' },
-            { text: 'Edit style', callback_data: 'onboard:edit:communication_style' },
+            { text: 'Edit availability', callback_data: 'onboard:edit:review:availability' },
+            { text: 'Edit style', callback_data: 'onboard:edit:review:communication_style' },
           ],
         ],
       },
@@ -232,7 +232,14 @@ export async function handleOnboardingCallback(
 ): Promise<OnboardingState | null> {
   const parts = data.split(':');
   const action = parts[1];
-  const payload = parts.slice(2).join(':');
+  const stepPayload = parts[2];
+  const payload = parts.slice(3).join(':') || parts.slice(2).join(':');
+
+  const staleReason = getOnboardingCallbackStaleReason(state, data);
+  if (staleReason) {
+    await sendOnboardingStaleCallbackHelp(ctx, state.telegramId, state.projectId, staleReason, state);
+    return state;
+  }
 
   const newState = { ...state };
 
@@ -245,7 +252,7 @@ export async function handleOnboardingCallback(
       return newState;
 
     case 'skip': {
-      const stepToSkip = (payload || state.step) as OnboardingStep;
+      const stepToSkip = (stepPayload || state.step) as OnboardingStep;
       if (stepToSkip === 'role') newState.role = newState.role ?? 'participant';
       if (stepToSkip === 'interests') newState.interests = newState.interests ?? '';
       if (stepToSkip === 'availability') newState.availability = newState.availability ?? 'not_sure';
@@ -297,6 +304,91 @@ export async function handleOnboardingCallback(
   }
 
   return null;
+}
+
+const ONBOARDING_STEPS_SET = new Set<OnboardingStep>([
+  'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
+]);
+
+export function getOnboardingCallbackStaleReason(
+  state: OnboardingState,
+  data: string
+): string | null {
+  const parts = data.split(':');
+  const action = parts[1] ?? '';
+  const stepPayload = parts[2] as OnboardingStep | undefined;
+
+  if (state.step === 'complete') return 'Onboarding is already complete.';
+
+  if (action === 'skip' || action === 'back') {
+    if (stepPayload && ONBOARDING_STEPS_SET.has(stepPayload) && stepPayload !== state.step) {
+      return `That button is from ${onboardingStepLabel(stepPayload)}; you are now on ${onboardingStepLabel(state.step)}.`;
+    }
+    return null;
+  }
+
+  const expectedStepByAction: Record<string, OnboardingStep | undefined> = {
+    availability: 'availability',
+    style: 'communication_style',
+    confirm: 'review',
+    edit: 'review',
+  };
+
+  const expected = expectedStepByAction[action];
+  if (expected && state.step !== expected) {
+    return `That button belongs to ${onboardingStepLabel(expected)}; you are now on ${onboardingStepLabel(state.step)}.`;
+  }
+
+  if (stepPayload && ONBOARDING_STEPS_SET.has(stepPayload) && stepPayload !== state.step) {
+    return `That button is from ${onboardingStepLabel(stepPayload)}; you are now on ${onboardingStepLabel(state.step)}.`;
+  }
+
+  return null;
+}
+
+export async function sendOnboardingStaleCallbackHelp(
+  ctx: Context,
+  telegramId: number,
+  projectId?: string,
+  reason = 'That onboarding button is no longer current.',
+  activeState?: OnboardingState | null
+): Promise<void> {
+  await ctx.answerCallbackQuery({ text: 'That button is out of date — I sent your current options.', show_alert: true });
+
+  const state = activeState ?? await loadOnboardingState(telegramId);
+  if (state && (!projectId || state.projectId === projectId)) {
+    await ctx.reply(
+      `↪️ ${reason}\n\n` +
+      `Current onboarding step: ${onboardingStepLabel(state.step)}.\n\n` +
+      `Use the latest buttons below, or send /restart_onboarding if you want to start over.`
+    );
+    await handleOnboardingStep(ctx, state);
+    return;
+  }
+
+  const [member] = await db
+    .select({ onboardingStatus: members.onboardingStatus })
+    .from(members)
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(projectId
+      ? and(eq(users.telegramId, telegramId), eq(members.projectId, projectId as any))
+      : eq(users.telegramId, telegramId))
+    .limit(1);
+
+  if (member?.onboardingStatus === 'complete') {
+    await ctx.reply(
+      `✅ Onboarding is already complete.\n\n` +
+      `That old button no longer applies. Use /status for your current project status, ` +
+      `/perspective to review your contributions, or /restart_onboarding to redo your profile.`
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `↪️ ${reason}\n\n` +
+    `I could not find an active onboarding session for this button. Use /start to continue, ` +
+    `/status to check where you are, or /restart_onboarding to start onboarding again.`
+  );
 }
 
 // ── Text Input Handler ─────────────────────────────────────────────────────────

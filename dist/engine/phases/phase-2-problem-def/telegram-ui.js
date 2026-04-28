@@ -15,6 +15,26 @@ import { processVote } from './index';
 function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+export function staleValidationMessage(status) {
+    const normalized = status ?? 'unknown';
+    if (normalized === 'missing') {
+        return ('↪️ This validation button no longer matches an active topic.\n\n' +
+            'Use /status to see the current round/validation state, or ask the admin to start a fresh validation with /startround.');
+    }
+    if (normalized === 'voting') {
+        return 'This validation is still open. Use the latest validation message buttons, or /status to review progress.';
+    }
+    const statusText = {
+        confirmed: 'This topic has already been confirmed and the round has moved forward.',
+        needs_work: 'This topic has moved to clarification, so the old vote buttons are closed.',
+        rejected: 'This validation has ended and the topic was not accepted.',
+        abandoned: 'This validation was cancelled.',
+        pending: 'This validation is not accepting votes yet.',
+    };
+    return (`↪️ ${statusText[normalized] ?? 'This validation is no longer accepting votes.'}\n\n` +
+        'Use “View topic” on the latest message or /status to review the current state. ' +
+        'If the team needs to revisit it, the admin can start a fresh validation with /startround.');
+}
 /**
  * Send validation DM to each member.
  * Includes: topic, context, and inline vote keyboard.
@@ -86,10 +106,13 @@ export async function handleVoteCallback(problemDefinitionId, vote, telegramId) 
             .where(eq(problemDefinitions.id, problemDefinitionId))
             .limit(1);
         if (!def?.projectId) {
-            return { text: '❌ Validation session not found.', alert: true };
+            return {
+                text: staleValidationMessage('missing'),
+                alert: true,
+            };
         }
         if (def.status !== 'voting') {
-            return { text: 'This validation is already complete.', alert: true };
+            return { text: staleValidationMessage(def.status), alert: true };
         }
         const [member] = await db
             .select({ id: members.id })
@@ -98,7 +121,10 @@ export async function handleVoteCallback(problemDefinitionId, vote, telegramId) 
             .where(and(eq(users.telegramId, telegramId), eq(members.projectId, def.projectId)))
             .limit(1);
         if (!member) {
-            return { text: '❌ You are not registered for this project yet.', alert: true };
+            return {
+                text: '❌ You are not registered for this project yet. Use /start with your invite link to join, or /status to review your current connection.',
+                alert: true,
+            };
         }
         const [existingVote] = await db
             .select({ vote: problemDefinitionVotes.vote })
@@ -142,7 +168,7 @@ export async function handleTopicCallback(problemDefinitionId) {
         .where(eq(problemDefinitions.id, problemDefinitionId))
         .limit(1);
     if (!def) {
-        return { text: '❌ Topic not found.', alert: true };
+        return { text: staleValidationMessage('missing'), alert: true };
     }
     const statusIcon = {
         pending: '⏳',

@@ -58,7 +58,6 @@ import {
 } from './flows/claim-steps';
 import {
   OnboardingState,
-  nextOnboardingStep,
 } from './flows/onboarding-state';
 import {
   handleOnboardingStep,
@@ -67,6 +66,7 @@ import {
   saveOnboardingState,
   clearOnboardingState,
   restartOnboardingState,
+  sendOnboardingStaleCallbackHelp,
 } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
@@ -822,7 +822,10 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Onboarding callbacks (member profile)
   if (data.startsWith('onboard:')) {
     const state = await loadOnboardingState(userId);
-    if (!state) { await answerCb(ctx, ''); return; }
+    if (!state) {
+      await sendOnboardingStaleCallbackHelp(ctx, userId);
+      return;
+    }
     await handleOnboardingCallback(ctx, state, data);
     return;
   }

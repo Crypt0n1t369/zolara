@@ -24,7 +24,6 @@ import { triggerRound, cancelRound } from '../../engine/round-manager';
 import {
   OnboardingState,
   ClaimState,
-  nextOnboardingStep,
 } from '../flows/onboarding-state';
 import {
   handleOnboardingStep,
@@ -32,6 +31,7 @@ import {
   saveOnboardingState,
   clearOnboardingState,
   restartOnboardingState,
+  sendOnboardingStaleCallbackHelp,
   handleOnboardingCallback,
 } from '../flows/onboarding-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState } from '../flows/claim-steps';
@@ -218,7 +218,16 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
     if (data.startsWith('onboard:')) {
       const state = await loadOnboardingState(userId);
       if (!state) {
-        await ctx.answerCallbackQuery('Session expired. Send /start to begin again.');
+        await sendOnboardingStaleCallbackHelp(ctx, userId, projectId);
+        return;
+      }
+      if (state.projectId !== projectId) {
+        await sendOnboardingStaleCallbackHelp(
+          ctx,
+          userId,
+          projectId,
+          'That button belongs to a different onboarding session.'
+        );
         return;
       }
       await handleOnboardingCallbackForProject(ctx, state, data, projectId);
@@ -464,21 +473,10 @@ async function handleOnboardingCallbackForProject(
   data: string,
   projectId: string
 ): Promise<void> {
-  const parts = data.split(':');
-  const action = parts[1];
-
-  // Handle skip inline — no need to call handleOnboardingStep for this
-  if (action === 'skip') {
-    state.step = nextOnboardingStep(state.step);
-    await saveOnboardingState(state);
-    const { handleOnboardingStep } = await import('../flows/onboarding-steps');
-    await handleOnboardingStep(ctx, state);
-  } else {
-    // handleOnboardingCallback persists intermediate state itself and clears
-    // state on completion. Do not re-save the returned completed state here,
-    // or post-onboarding messages get swallowed by a stale onboard:* key.
-    await handleOnboardingCallback(ctx, state, data);
-  }
+  // handleOnboardingCallback persists intermediate state itself and clears
+  // state on completion. Do not re-save the returned completed state here,
+  // or post-onboarding messages get swallowed by a stale onboard:* key.
+  await handleOnboardingCallback(ctx, state, data);
 }
 
 async function handleOnboardingTextForProject(

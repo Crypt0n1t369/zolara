@@ -29,7 +29,7 @@ import { handleAddAdminCommand, handleRemoveAdminCommand, handleTransferOwnershi
 import { nextStep, } from './flows/initiation-state';
 import { handleInitiationStep, handleCallback, } from './flows/initiation-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState, } from './flows/claim-steps';
-import { handleOnboardingStep, handleOnboardingText, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, } from './flows/onboarding-steps';
+import { handleOnboardingStep, handleOnboardingText, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, sendOnboardingStaleCallbackHelp, } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
 import { dashboardNextAction, escapeHtml, formatOnboardingBreakdown, missingResponses as calculateMissingResponses, pickCurrentRound, summarizeOnboarding, } from './dashboard';
@@ -689,7 +689,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (data.startsWith('onboard:')) {
         const state = await loadOnboardingState(userId);
         if (!state) {
-            await answerCb(ctx, '');
+            await sendOnboardingStaleCallbackHelp(ctx, userId);
             return;
         }
         await handleOnboardingCallback(ctx, state, data);

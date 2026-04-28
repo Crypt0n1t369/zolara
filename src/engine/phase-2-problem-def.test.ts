@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { PHASE_PROBLEM_DEF } from './phases/flags';
 import type { ProblemDefinitionStatus, ProblemDefinitionVote } from '../data/schema/problem-definitions';
+import { staleValidationMessage } from './phases/phase-2-problem-def/telegram-ui';
 
 describe('Phase 2 — Problem Validation Gate', () => {
   // ── Feature flag ─────────────────────────────────────────────────────────────
@@ -171,6 +172,22 @@ describe('Phase 2 — Problem Validation Gate', () => {
       const MAX_CLARIFICATION = 3;
       const def = { clarificationRound: 3 };
       expect(def.clarificationRound >= MAX_CLARIFICATION).toBe(true);
+    });
+  });
+
+
+  describe('stale validation button copy', () => {
+    it('explains completed validation and offers status/restart path', () => {
+      const message = staleValidationMessage('confirmed');
+      expect(message).toContain('already been confirmed');
+      expect(message).toContain('/status');
+      expect(message).toContain('/startround');
+    });
+
+    it('explains missing validation sessions clearly', () => {
+      const message = staleValidationMessage('missing');
+      expect(message).toContain('no longer matches an active topic');
+      expect(message).toContain('/status');
     });
   });
 

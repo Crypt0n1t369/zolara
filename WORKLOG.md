@@ -467,3 +467,30 @@ Verified:
 
 ### Next
 - Live Telegram smoke test of `/restart_onboarding` on a project bot with a real member account.
+
+## 2026-04-29 00:38 EEST — Stale Button Handling for Onboarding + Validation
+
+### Built / Fixed
+- Added stale onboarding callback detection for moved/completed steps.
+  - New onboarding buttons now encode the step they were rendered for.
+  - Old buttons are checked against the current Redis step before mutating state.
+  - Expired/completed/mismatched onboarding buttons now show clear recovery copy instead of silent/empty errors.
+  - Recovery paths point members to the latest current step, `/status`, `/perspective`, or `/restart_onboarding` as appropriate.
+- Updated project-bot and control-bot callback routing to handle missing onboarding sessions with user-facing guidance.
+- Removed the per-project skip special case so all onboarding callbacks go through the same stale-state guard.
+- Improved stale validation callback copy.
+  - Completed/missing validation votes now explain the current state and guide users to `/status` or a fresh admin `/startround` rather than saying only “already complete.”
+  - Unregistered validation voters get a clearer join/status path.
+- Added tests for onboarding stale callback detection and validation stale-copy contracts.
+
+### Verified
+- `npm test` passes: 10 files / 110 tests.
+- `npm run build` passes.
+- Restarted PM2 `zolara` with updated code.
+- Health check OK: `GET http://localhost:3000/health`.
+
+### Current State
+- Stale onboarding and validation buttons no longer fail silently or give confusing errors; users get a current-state explanation plus a concrete recovery path.
+
+### Next
+- Live Telegram smoke test: tap an old onboarding button after advancing steps, and tap an old validation vote after validation closes.

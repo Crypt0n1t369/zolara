@@ -18,8 +18,7 @@ import { db } from '../../data/db';
 import { projects, members, users, rounds, responses } from '../../data/schema/projects';
 import { eq, and, desc } from 'drizzle-orm';
 import { redis } from '../../data/redis';
-import { nextOnboardingStep, } from '../flows/onboarding-state';
-import { handleOnboardingStep, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, handleOnboardingCallback, } from '../flows/onboarding-steps';
+import { handleOnboardingStep, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, sendOnboardingStaleCallbackHelp, handleOnboardingCallback, } from '../flows/onboarding-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState } from '../flows/claim-steps';
 // Map: projectId → cached Bot instance
 const botCache = new Map();
@@ -173,7 +172,11 @@ function wireProjectBotHandlers(bot, projectId) {
         if (data.startsWith('onboard:')) {
             const state = await loadOnboardingState(userId);
             if (!state) {
-                await ctx.answerCallbackQuery('Session expired. Send /start to begin again.');
+                await sendOnboardingStaleCallbackHelp(ctx, userId, projectId);
+                return;
+            }
+            if (state.projectId !== projectId) {
+                await sendOnboardingStaleCallbackHelp(ctx, userId, projectId, 'That button belongs to a different onboarding session.');
                 return;
             }
             await handleOnboardingCallbackForProject(ctx, state, data, projectId);
@@ -376,21 +379,10 @@ async function handleMemberClaimForProject(ctx, targetProjectId) {
     await handleClaimWelcome(ctx, state);
 }
 async function handleOnboardingCallbackForProject(ctx, state, data, projectId) {
-    const parts = data.split(':');
-    const action = parts[1];
-    // Handle skip inline — no need to call handleOnboardingStep for this
-    if (action === 'skip') {
-        state.step = nextOnboardingStep(state.step);
-        await saveOnboardingState(state);
-        const { handleOnboardingStep } = await import('../flows/onboarding-steps');
-        await handleOnboardingStep(ctx, state);
-    }
-    else {
-        // handleOnboardingCallback persists intermediate state itself and clears
-        // state on completion. Do not re-save the returned completed state here,
-        // or post-onboarding messages get swallowed by a stale onboard:* key.
-        await handleOnboardingCallback(ctx, state, data);
-    }
+    // handleOnboardingCallback persists intermediate state itself and clears
+    // state on completion. Do not re-save the returned completed state here,
+    // or post-onboarding messages get swallowed by a stale onboard:* key.
+    await handleOnboardingCallback(ctx, state, data);
 }
 async function handleOnboardingTextForProject(ctx, state, text, projectId) {
     const { handleOnboardingText } = await import('../flows/onboarding-steps');

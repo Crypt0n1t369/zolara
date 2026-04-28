@@ -11,6 +11,7 @@ import {
   onboardingStepLabel,
   currentlyAnsweringLabel,
 } from './onboarding-state';
+import { getOnboardingCallbackStaleReason } from './onboarding-steps';
 
 describe('Onboarding state machine', () => {
   describe('STEP_ORDER', () => {
@@ -59,4 +60,27 @@ describe('Onboarding state machine', () => {
       expect(prevOnboardingStep('welcome')).toBe('welcome');
     });
   });
+
+  describe('stale callback detection', () => {
+    const state = {
+      phase: 'onboarding' as const,
+      projectId: 'project-1',
+      telegramId: 123,
+      step: 'interests' as OnboardingStep,
+      createdAt: '2026-04-28T00:00:00.000Z',
+    };
+
+    it('flags skip buttons from an older step', () => {
+      expect(getOnboardingCallbackStaleReason(state, 'onboard:skip:role')).toContain('Role / connection');
+    });
+
+    it('allows buttons for the current step', () => {
+      expect(getOnboardingCallbackStaleReason(state, 'onboard:skip:interests')).toBeNull();
+    });
+
+    it('flags confirm when the user is no longer on review', () => {
+      expect(getOnboardingCallbackStaleReason(state, 'onboard:confirm:review')).toContain('Review your answers');
+    });
+  });
+
 });
