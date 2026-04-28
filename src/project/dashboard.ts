@@ -18,6 +18,23 @@ export type OnboardingSummary = {
   byStatus: Record<string, number>;
 };
 
+export type ValidationVoteCounts = {
+  clear: number;
+  refine: number;
+  unsure: number;
+};
+
+export type DashboardValidationAttempt = {
+  topicText: string;
+  refinedText?: string | null;
+  status: string | null;
+  votesReceived: number | null;
+  totalVoters: number | null;
+  confidenceScore?: number | null;
+  clarificationRound: number | null;
+  voteCounts?: ValidationVoteCounts;
+};
+
 const ACTIVE_ROUND_STATUSES = new Set(['scheduled', 'gathering', 'synthesizing']);
 
 export function escapeHtml(text: string): string {
@@ -59,6 +76,25 @@ export function missingResponses(round: DashboardRound | null, fallbackMemberCou
   const responseCount = round.responseCount ?? 0;
   const memberCount = round.memberCount ?? fallbackMemberCount;
   return Math.max(0, memberCount - responseCount);
+}
+
+export function formatValidationAttemptLine(attempt: DashboardValidationAttempt, index: number): string {
+  const counts = attempt.voteCounts;
+  const voteText = counts
+    ? `✅ ${counts.clear} / ⚠️ ${counts.refine} / ❓ ${counts.unsure}`
+    : `${attempt.votesReceived ?? 0}/${attempt.totalVoters ?? 0}`;
+  const refined = attempt.refinedText ? ` → refined: ${escapeHtml(attempt.refinedText)}` : '';
+  const confidence = attempt.confidenceScore === null || attempt.confidenceScore === undefined
+    ? ''
+    : ` · conf ${attempt.confidenceScore}/100`;
+
+  return `${index + 1}. <b>${escapeHtml(attempt.status ?? 'unknown')}</b> · votes ${voteText} (${attempt.votesReceived ?? 0}/${attempt.totalVoters ?? 0}) · c${attempt.clarificationRound ?? 0}${confidence}\n` +
+    `   ${escapeHtml(attempt.topicText)}${refined}`;
+}
+
+export function formatValidationHistory(attempts: DashboardValidationAttempt[], max = 5): string {
+  if (attempts.length === 0) return 'No validation attempts yet.';
+  return attempts.slice(0, max).map((attempt, index) => formatValidationAttemptLine(attempt, index)).join('\n');
 }
 
 export function dashboardNextAction(args: {

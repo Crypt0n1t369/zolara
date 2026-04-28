@@ -518,3 +518,21 @@ Verified:
 
 ### Next
 - Live Telegram smoke test: force a `needs_work` vote result, run `/admin-guide`, then `/refinetopic <suggested or edited topic>` and verify members receive the new validation.
+
+## 2026-04-29 01:35 Cairo — Validation history dashboard/status
+
+Built:
+- Added validation history formatting for previous topic attempts, status, vote counts, clarification round, confidence, and refined topic.
+- Wired `/dashboard` and `/status` to show the latest 5 validation attempts.
+- Fixed `/status` round lookup to order by newest round number.
+
+Tested:
+- `npm test -- --run src/project/dashboard.test.ts` — pass.
+- `npm run build` — pass.
+- Restarted PM2 `zolara` and verified `GET /health` returns OK.
+
+Current state:
+- Runtime online with validation history visible in admin dashboard/status.
+
+Next:
+- Continue Phase 1 validation/onboarding flow improvements.

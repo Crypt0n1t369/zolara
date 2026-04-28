@@ -34,6 +34,23 @@ export function missingResponses(round, fallbackMemberCount) {
     const memberCount = round.memberCount ?? fallbackMemberCount;
     return Math.max(0, memberCount - responseCount);
 }
+export function formatValidationAttemptLine(attempt, index) {
+    const counts = attempt.voteCounts;
+    const voteText = counts
+        ? `✅ ${counts.clear} / ⚠️ ${counts.refine} / ❓ ${counts.unsure}`
+        : `${attempt.votesReceived ?? 0}/${attempt.totalVoters ?? 0}`;
+    const refined = attempt.refinedText ? ` → refined: ${escapeHtml(attempt.refinedText)}` : '';
+    const confidence = attempt.confidenceScore === null || attempt.confidenceScore === undefined
+        ? ''
+        : ` · conf ${attempt.confidenceScore}/100`;
+    return `${index + 1}. <b>${escapeHtml(attempt.status ?? 'unknown')}</b> · votes ${voteText} (${attempt.votesReceived ?? 0}/${attempt.totalVoters ?? 0}) · c${attempt.clarificationRound ?? 0}${confidence}\n` +
+        `   ${escapeHtml(attempt.topicText)}${refined}`;
+}
+export function formatValidationHistory(attempts, max = 5) {
+    if (attempts.length === 0)
+        return 'No validation attempts yet.';
+    return attempts.slice(0, max).map((attempt, index) => formatValidationAttemptLine(attempt, index)).join('\n');
+}
 export function dashboardNextAction(args) {
     if (!args.hasMembers)
         return 'Invite members with /invite.';

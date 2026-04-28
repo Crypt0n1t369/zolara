@@ -74,6 +74,7 @@ import {
   dashboardNextAction,
   escapeHtml,
   formatOnboardingBreakdown,
+  formatValidationHistory,
   missingResponses as calculateMissingResponses,
   pickCurrentRound,
   summarizeOnboarding,
@@ -591,14 +592,60 @@ zolaraBot.command('invite', async (ctx) => {
   );
 });
 
+async function loadValidationHistory(projectId: string, limit = 5) {
+  const attempts = await db
+    .select({
+      id: problemDefinitions.id,
+      topicText: problemDefinitions.topicText,
+      refinedText: problemDefinitions.refinedText,
+      status: problemDefinitions.status,
+      votesReceived: problemDefinitions.votesReceived,
+      totalVoters: problemDefinitions.totalVoters,
+      confidenceScore: problemDefinitions.confidenceScore,
+      clarificationRound: problemDefinitions.clarificationRound,
+      updatedAt: problemDefinitions.updatedAt,
+    })
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.projectId, projectId))
+    .orderBy(desc(problemDefinitions.updatedAt))
+    .limit(limit);
+
+  return Promise.all(attempts.map(async (attempt) => {
+    const votes = await db
+      .select({ vote: problemDefinitionVotes.vote })
+      .from(problemDefinitionVotes)
+      .where(eq(problemDefinitionVotes.problemDefinitionId, attempt.id))
+      .limit(100);
+
+    return {
+      ...attempt,
+      voteCounts: {
+        clear: votes.filter((v) => v.vote === 'clear').length,
+        refine: votes.filter((v) => v.vote === 'refine').length,
+        unsure: votes.filter((v) => v.vote === 'unsure').length,
+      },
+    };
+  }));
+}
+
 zolaraBot.command('status', async (ctx) => {
   const { project } = await resolveAdminProject(ctx.from!.id);
   if (!project) { await ctx.reply("You don't have any projects yet."); return; }
 
-  const [round] = await db.select({ id: rounds.id, roundNumber: rounds.roundNumber, status: rounds.status, responseCount: rounds.responseCount, memberCount: rounds.memberCount, topic: rounds.topic } as any).from(rounds).where(eq(rounds.projectId, project.id)).limit(1);
+  const [round] = await db
+    .select({ id: rounds.id, roundNumber: rounds.roundNumber, status: rounds.status, responseCount: rounds.responseCount, memberCount: rounds.memberCount, topic: rounds.topic } as any)
+    .from(rounds)
+    .where(eq(rounds.projectId, project.id))
+    .orderBy(desc(rounds.roundNumber))
+    .limit(1);
+  const validationHistory = await loadValidationHistory(project.id, 5);
+  const validationText = formatValidationHistory(validationHistory, 5);
 
   if (!round) {
-    await ctx.reply(`*${project.name}*\n\nNo active round. Use /startround to begin.`, { parse_mode: 'Markdown' });
+    await ctx.reply(
+      `<b>${escapeHtml(project.name)}</b>\n\nNo active round. Use /startround to begin.\n\n<b>Validation history</b>\n${validationText}`,
+      { parse_mode: 'HTML' }
+    );
     return;
   }
 
@@ -607,8 +654,13 @@ zolaraBot.command('status', async (ctx) => {
   const rstatus = round.status ?? 'unknown';
 
   await ctx.reply(
-    `*${project.name}*\n\nRound #${round.roundNumber}\nStatus: *${rstatus}*\nResponses: ${responseCount}/${memberCount}\nTopic: ${round.topic ?? '—'}`,
-    { parse_mode: 'Markdown' }
+    `<b>${escapeHtml(project.name)}</b>\n\n` +
+    `Round #${round.roundNumber}\n` +
+    `Status: <b>${escapeHtml(rstatus)}</b>\n` +
+    `Responses: ${responseCount}/${memberCount}\n` +
+    `Topic: ${escapeHtml(round.topic ?? '—')}\n\n` +
+    `<b>Validation history</b>\n${validationText}`,
+    { parse_mode: 'HTML' }
   );
 });
 
@@ -625,34 +677,8 @@ zolaraBot.command('dashboard', async (ctx) => {
   const onboarding = summarizeOnboarding(memberRows);
   const onboardingBreakdown = formatOnboardingBreakdown(onboarding);
 
-  const [latestValidation] = await db
-    .select({
-      id: problemDefinitions.id,
-      topicText: problemDefinitions.topicText,
-      refinedText: problemDefinitions.refinedText,
-      status: problemDefinitions.status,
-      votesReceived: problemDefinitions.votesReceived,
-      totalVoters: problemDefinitions.totalVoters,
-      confidenceScore: problemDefinitions.confidenceScore,
-      clarificationRound: problemDefinitions.clarificationRound,
-      updatedAt: problemDefinitions.updatedAt,
-    })
-    .from(problemDefinitions)
-    .where(eq(problemDefinitions.projectId, project.id))
-    .orderBy(desc(problemDefinitions.updatedAt))
-    .limit(1);
-
-  const validationVotes = latestValidation
-    ? await db
-      .select({ vote: problemDefinitionVotes.vote })
-      .from(problemDefinitionVotes)
-      .where(eq(problemDefinitionVotes.problemDefinitionId, latestValidation.id))
-      .limit(100)
-    : [];
-
-  const clearVotes = validationVotes.filter((v) => v.vote === 'clear').length;
-  const refineVotes = validationVotes.filter((v) => v.vote === 'refine').length;
-  const unsureVotes = validationVotes.filter((v) => v.vote === 'unsure').length;
+  const validationHistory = await loadValidationHistory(project.id, 5);
+  const latestValidation = validationHistory[0];
 
   const recentRounds = await db
     .select({
@@ -680,17 +706,7 @@ zolaraBot.command('dashboard', async (ctx) => {
     hasMembers: onboarding.total > 0,
   });
 
-  const validationText = latestValidation
-    ? `Status: <b>${escapeHtml(latestValidation.status ?? 'unknown')}</b>
-` +
-      `Topic: ${escapeHtml(latestValidation.topicText)}
-` +
-      (latestValidation.refinedText ? `Refined: ${escapeHtml(latestValidation.refinedText)}
-` : '') +
-      `Votes: ✅ ${clearVotes} / ⚠️ ${refineVotes} / ❓ ${unsureVotes} (${latestValidation.votesReceived ?? 0}/${latestValidation.totalVoters ?? 0})
-` +
-      `Confidence: ${latestValidation.confidenceScore ?? '—'}/100 · Clarification round: ${latestValidation.clarificationRound ?? 0}`
-    : 'No validation yet.';
+  const validationText = formatValidationHistory(validationHistory, 5);
 
   const roundLabel = latestRound && ['scheduled', 'gathering', 'synthesizing'].includes(latestRound.status ?? '')
     ? 'Current active/scheduled round'
@@ -720,7 +736,7 @@ Deadline: ${latestRound.deadline.toISOString().slice(0, 16).replace('T', ' ')} U
     `Pending breakdown: ${escapeHtml(onboardingBreakdown)}
 
 ` +
-    `<b>Latest validation</b>
+    `<b>Validation history</b>
 ${validationText}
 
 ` +

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   dashboardNextAction,
   formatOnboardingBreakdown,
+  formatValidationHistory,
   missingResponses,
   pickCurrentRound,
   summarizeOnboarding,
@@ -43,5 +44,25 @@ describe('admin dashboard helpers', () => {
       missingResponses: 3,
       hasMembers: true,
     })).toContain('3 missing response');
+  });
+
+  it('formats validation history with prior attempts, vote counts, clarification, and refined topic', () => {
+    const text = formatValidationHistory([
+      {
+        topicText: 'Original topic',
+        refinedText: 'Clearer topic',
+        status: 'needs_work',
+        votesReceived: 3,
+        totalVoters: 4,
+        confidenceScore: 42,
+        clarificationRound: 1,
+        voteCounts: { clear: 1, refine: 2, unsure: 0 },
+      },
+    ]);
+
+    expect(text).toContain('needs_work');
+    expect(text).toContain('✅ 1 / ⚠️ 2 / ❓ 0');
+    expect(text).toContain('c1');
+    expect(text).toContain('refined: Clearer topic');
   });
 });
