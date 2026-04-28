@@ -7,26 +7,26 @@ describe('Managed Bots lifecycle', () => {
     describe('generateBotUsername', () => {
         it('should lowercase and slugify project name', () => {
             const result = generateBotUsername('JCI Vision 2030');
-            expect(result).toMatch(/^jci_vision_2030_zol_[a-z0-9]{4}$/);
+            expect(result).toBe('jci_vision_2030_zol_bot');
         });
         it('should remove special characters', () => {
             const result = generateBotUsername('Team Alpha!');
-            expect(result).toMatch(/^team_alpha_zol_[a-z0-9]{4}$/);
+            expect(result).toBe('team_alpha_zol_bot');
         });
         it('should collapse multiple spaces/separators', () => {
             const result = generateBotUsername('Hello---World   Test');
-            expect(result).toMatch(/^hello_world_test_zol_[a-z0-9]{4}$/);
+            expect(result).toBe('hello_world_test_zol_bot');
         });
         it('should trim leading/trailing underscores', () => {
             const result = generateBotUsername('  Test Project  ');
-            expect(result).toMatch(/^test_project_zol_[a-z0-9]{4}$/);
+            expect(result).toBe('test_project_zol_bot');
         });
         it('should truncate to 30 chars before suffix if needed', () => {
             const longName = 'a'.repeat(50);
             const result = generateBotUsername(longName);
             // Result should still be valid telegram username
             expect(result.length).toBeLessThanOrEqual(64);
-            expect(result).toMatch(/^a{22}_zol_[a-z0-9]{4}$/);
+            expect(result).toBe(`${'a'.repeat(24)}_zol_bot`);
         });
     });
     describe('buildCreationLink', () => {

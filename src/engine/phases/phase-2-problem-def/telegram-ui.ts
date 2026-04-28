@@ -9,10 +9,14 @@
 
 import { InlineKeyboard } from 'grammy';
 import { db } from '../../../data/db';
-import { members, problemDefinitions } from '../../../data/schema/projects';
+import { members, problemDefinitions, problemDefinitionVotes, users } from '../../../data/schema/projects';
 import { sendMessage } from '../../../util/telegram-sender';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { processVote } from './index';
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 /**
  * Send validation DM to each member.
@@ -24,16 +28,15 @@ export async function sendValidationDM(
   topic: string,
   memberList: { userId: number }[]
 ): Promise<void> {
-  const keyboard = buildValidationKeyboard('__PLACEHOLDER__'); // real IDs per member below
-
+  const safeTopic = escapeHtml(topic);
   const message =
-    `🗳 *Topic Validation Required*\n\n` +
-    `A round has been proposed for: *${topic}*\n\n` +
+    `🗳 <b>Topic Validation Required</b>\n\n` +
+    `A round has been proposed for: <b>${safeTopic}</b>\n\n` +
     `Before we explore this topic, your team needs to confirm it's clearly defined.\n\n` +
-    `Is *"${topic}"* clearly defined?\n\n` +
-    `• *✅ Clear* — I understand the problem, let's explore it\n` +
-    `• *⚠️ Refine* — Needs clarification or more specificity\n` +
-    `• *❓ Not sure* — I need more context before deciding\n\n` +
+    `Is "${safeTopic}" clearly defined?\n\n` +
+    `• ✅ Clear — I understand the problem, let's explore it\n` +
+    `• ⚠️ Refine — Needs clarification or more specificity\n` +
+    `• ❓ Not sure — I need more context before deciding\n\n` +
     `Your vote helps the team start with the right foundation.\n` +
     `Tap your choice below:`;
 
@@ -41,7 +44,7 @@ export async function sendValidationDM(
     try {
       const kbd = buildValidationKeyboard(problemDefinitionId);
       await sendMessage(member.userId, message, {
-        parseMode: 'Markdown',
+        parseMode: 'HTML',
         replyMarkup: kbd,
       }, projectId);
     } catch (err) {
@@ -94,10 +97,55 @@ export function parseValidationCallback(data: string): {
 export async function handleVoteCallback(
   problemDefinitionId: string,
   vote: 'clear' | 'refine' | 'unsure',
-  memberId: number
+  telegramId: number
 ): Promise<{ text: string; alert: boolean }> {
   try {
-    const result = await processVote(problemDefinitionId, memberId, vote);
+    const [def] = await db
+      .select({ projectId: problemDefinitions.projectId, status: problemDefinitions.status })
+      .from(problemDefinitions)
+      .where(eq(problemDefinitions.id, problemDefinitionId))
+      .limit(1);
+
+    if (!def?.projectId) {
+      return { text: '❌ Validation session not found.', alert: true };
+    }
+
+    if (def.status !== 'voting') {
+      return { text: 'This validation is already complete.', alert: true };
+    }
+
+    const [member] = await db
+      .select({ id: members.id })
+      .from(members)
+      .innerJoin(users, eq(members.userId, users.id))
+      .where(and(eq(users.telegramId, telegramId), eq(members.projectId, def.projectId)))
+      .limit(1);
+
+    if (!member) {
+      return { text: '❌ You are not registered for this project yet.', alert: true };
+    }
+
+    const [existingVote] = await db
+      .select({ vote: problemDefinitionVotes.vote })
+      .from(problemDefinitionVotes)
+      .where(
+        and(
+          eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId),
+          eq(problemDefinitionVotes.memberId, member.id)
+        )
+      )
+      .limit(1);
+
+    if (existingVote) {
+      const existingLabel = {
+        clear: '✅ Clear',
+        refine: '⚠️ Refine',
+        unsure: '❓ Not sure',
+      }[existingVote.vote as 'clear' | 'refine' | 'unsure'] ?? existingVote.vote;
+      return { text: `Your vote is already recorded as ${existingLabel}.`, alert: true };
+    }
+
+    const result = await processVote(problemDefinitionId, member.id, vote);
 
     if (!result.recorded) {
       return { text: '❌ Could not record your vote. Please try again.', alert: true };
@@ -216,7 +264,7 @@ export async function sendClarificationToGroup(
     `When you're ready, tap *Proceed* to re-run the validation.`;
 
   await sendMessage(groupId, message, {
-    parseMode: 'Markdown',
+    parseMode: 'HTML',
     replyMarkup: keyboard,
   }, projectId);
 }

@@ -23,11 +23,12 @@ import {
   rounds,
   projects,
   members,
+  users,
   problemDefinitions,
   problemDefinitionVotes,
 } from '../../../data/schema/projects';
 import { isPhaseActive } from '../flags';
-import { triggerRound } from '../../round-manager';
+import { startScheduledRound, triggerRound } from '../../round-manager';
 import { sendValidationDM } from './telegram-ui';
 import { llm } from '../../llm/minimax';
 import { round as roundLog } from '../../../util/logger';
@@ -35,7 +36,8 @@ import { round as roundLog } from '../../../util/logger';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const VOTE_DEADLINE_HOURS = 24; // hours to wait for votes before tallying
-const CONFIRM_THRESHOLD = 0.5;  // % of members that must vote 'clear' to confirm
+// A topic is confirmed only when Clear has a strict majority of votes.
+// 1 clear + 1 unsure/refine is not enough.
 const LOW_CONFIDENCE_THRESHOLD = 40; // confidence score below this → flag admin
 
 // ── Types ───────────────────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ export async function validateAndTriggerRound(
   const memberList = await db
     .select()
     .from(members)
-    .where(eq(members.projectId, projectId))
+    .where(and(eq(members.projectId, projectId), eq(members.onboardingStatus, 'complete')))
     .limit(100);
 
   if (memberList.length < 2) {
@@ -126,7 +128,7 @@ export async function validateAndTriggerRound(
       roundId: null,
       problemDefinitionId: null,
       validationStatus: null,
-      message: 'Need at least 2 members to start a validation',
+      message: 'Need at least 2 fully onboarded members to start validation',
     };
   }
 
@@ -183,10 +185,13 @@ export async function validateAndTriggerRound(
     .set({ roundId: round.id })
     .where(eq(problemDefinitions.id, problemDefinition.id));
 
-  // ── Step 4: Send validation DMs to all members ─────────────────────────────
-  const voterList = memberList
-    .filter((m) => m.userId != null)
-    .map((m) => ({ userId: m.userId as number }));
+  // ── Step 4: Send validation DMs to fully onboarded members only ─────────────
+  const voterList = await db
+    .select({ userId: users.telegramId })
+    .from(members)
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(and(eq(members.projectId, projectId), eq(members.onboardingStatus, 'complete')))
+    .limit(100);
   await sendValidationDM(problemDefinition.id, projectId, topic, voterList);
 
   return {
@@ -255,13 +260,18 @@ export async function processVote(
 
   if (!def) throw new Error('Problem definition not found');
 
-  const participationRate = def.totalVoters ? votes.length / def.totalVoters : 0;
+  const totalVoters = def.totalVoters ?? 0;
+  const clearVotes = votes.filter((v) => v.vote === 'clear').length;
+  const nonClearVotes = votes.length - clearVotes;
 
-  // Tally if: deadline passed OR >50% participation
+  // Tally only when the outcome is decided, all eligible voters answered, or the deadline passed.
+  // Do not close early on a 50/50 split — the next vote could still create a Clear majority.
   const deadlineReached = def.voteDeadline && def.voteDeadline <= new Date();
-  const thresholdReached = participationRate >= 0.5;
+  const allVotesReceived = totalVoters > 0 && votes.length >= totalVoters;
+  const clearMajorityReached = totalVoters > 0 && clearVotes > totalVoters / 2;
+  const nonClearMajorityReached = totalVoters > 0 && nonClearVotes > totalVoters / 2;
 
-  if (deadlineReached || thresholdReached) {
+  if (deadlineReached || allVotesReceived || clearMajorityReached || nonClearMajorityReached) {
     const result = await tallyVotes(problemDefinitionId);
     return { recorded: true, tallyComplete: true, result };
   }
@@ -312,7 +322,7 @@ export async function tallyVotes(problemDefinitionId: string): Promise<Validatio
   const clearRate =
     voteSummary.total > 0 ? voteSummary.clear / voteSummary.total : 0;
 
-  if (clearRate >= CONFIRM_THRESHOLD && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
+  if (voteSummary.clear > voteSummary.total / 2 && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
     status = 'confirmed';
   } else if (voteSummary.refine > 0 || confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
     status = 'needs_work';
@@ -330,13 +340,10 @@ export async function tallyVotes(problemDefinitionId: string): Promise<Validatio
     })
     .where(eq(problemDefinitions.id, problemDefinitionId));
 
-  // If confirmed → start the round
+  // If confirmed → start the round and send the first questions.
   let roundId: string | undefined;
-  if (status === 'confirmed' && def.roundId) {
-    await db
-      .update(rounds)
-      .set({ status: 'gathering' })
-      .where(eq(rounds.id, def.roundId));
+  if (status === 'confirmed' && def.roundId && def.projectId) {
+    await startScheduledRound(def.roundId, def.projectId);
     roundId = def.roundId;
   }
 

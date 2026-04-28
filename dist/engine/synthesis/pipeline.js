@@ -23,12 +23,12 @@ export async function runSynthesis(input) {
     // Step 3: Alignment mapping
     const alignment = await mapAlignment(themes, responsesData.length);
     // Step 4: Report synthesis
-    const report = await synthesizeReport(input, themes, alignment);
+    const report = await synthesizeReport(input, themes, alignment, input.anonymity);
     // Step 5: Validation
     const validated = validateReport(report);
     return validated;
 }
-async function collectResponses(roundId, anonymity) {
+async function collectResponses(roundId, _anonymity) {
     const rows = await db
         .select({
         responseText: responses.responseText,
@@ -39,8 +39,10 @@ async function collectResponses(roundId, anonymity) {
         .innerJoin(members, eq(members.id, responses.memberId))
         .where(eq(questions.roundId, roundId))
         .limit(100);
+    // Always pass actual response text to LLM for theme extraction.
+    // Anonymization is applied only in the final report presentation, not during analysis.
     return rows.map((r) => ({
-        text: anonymity === 'full' ? `[Response]` : r.responseText ?? '',
+        text: r.responseText ?? '',
         questionType: r.questionType ?? 'open',
     }));
 }
@@ -134,7 +136,7 @@ Convergence score formula: % of responses that show agreement on major themes.`;
         };
     }
 }
-async function synthesizeReport(input, themes, alignment) {
+async function synthesizeReport(input, themes, alignment, anonymity) {
     const participationRate = Math.round((input.responseCount / input.memberCount) * 100);
     const systemPrompt = `You are Zolara's report synthesis engine. Write a clear, actionable synthesis report from the collected perspectives.
 
@@ -179,12 +181,20 @@ Convergence Score: ${alignment.convergenceScore}% (${alignment.convergenceTier})
             maxTokens: 3072,
         });
         const reportText = response.text.trim();
+        // Anonymize quotes if full anonymity is configured
+        const anonymizeQuote = (quote) => {
+            if (anonymity === 'full')
+                return '[Anonymous]';
+            if (anonymity === 'optional')
+                return '[Team member]';
+            return quote; // 'attributed' — keep as-is
+        };
         return {
             themes: themes.themes.map((t) => ({
                 name: t.name,
                 alignment: alignment.alignments.find((a) => a.theme === t.name)?.level ?? 'neutral',
                 summary: t.summary,
-                quotes: t.quotes,
+                quotes: t.quotes?.map(anonymizeQuote),
             })),
             commonGround: themes.commonGround,
             creativeTensions: themes.creativeTensions,

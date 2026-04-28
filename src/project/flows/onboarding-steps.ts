@@ -27,22 +27,24 @@ async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> 
   const projectName = project?.name ?? 'the project';
 
   await ctx.reply(
-    `👋 Welcome to *${projectName}*!\n\n` +
+    `👋 Welcome to ${projectName}!\n\n` +
     "I'm your team's AI assistant. I'll periodically check in with you " +
     "privately to understand your perspective, then share synthesized insights with the whole group.\n\n" +
-    "Let me learn a bit about you so I can work with you effectively.",
-    { parse_mode: 'Markdown' }
+    "Let me learn a bit about you so I can work with you effectively."
   );
 
-  // Advance to next step and save — let the caller's dispatcher handle the next renderer
+  // Advance immediately to the first question; otherwise users see a welcome
+  // message but do not know what to answer next.
   state.step = nextOnboardingStep(state.step);
   await saveOnboardingState(state);
+  await sendRole(ctx, state);
 }
 
 async function sendRole(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
     "What's your *role* or connection to this project?\n\n" +
-    'For example: "Team lead", "Designer", "Stakeholder", "New member"',
+    'For example: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
+    'Reply with a short phrase. If another Zolara message arrives meanwhile, your next typed reply will still be saved here.',
     { parse_mode: 'Markdown' }
   );
 }
@@ -61,14 +63,14 @@ async function sendInterests(ctx: Context, state: OnboardingState): Promise<void
     : '';
 
   await ctx.reply(
-    `What aspects of this project are you most *interested* in or knowledgeable about?${goalText}`,
-    { parse_mode: 'Markdown' }
+    `What aspects of this project are you most interested in or knowledgeable about?${goalText}`
   );
 }
 
 async function sendAvailability(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
-    'How much *time* per week can you dedicate to this?',
+    'Roughly how much *time* per week can you dedicate to this?\n\n' +
+    'This helps Zolara pace check-ins and avoid overloading you. An estimate is fine.',
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -80,6 +82,9 @@ async function sendAvailability(ctx: Context, state: OnboardingState): Promise<v
           [
             { text: '3-5 hours', callback_data: 'onboard:availability:3-5_hrs' },
             { text: '5+ hours', callback_data: 'onboard:availability:5+_hrs' },
+          ],
+          [
+            { text: 'Not sure yet', callback_data: 'onboard:availability:not_sure' },
           ],
         ],
       },
@@ -201,6 +206,7 @@ export async function handleOnboardingText(
       newState.role = text.trim().slice(0, 200);
       newState.step = nextOnboardingStep(state.step);
       await saveOnboardingState(newState);
+      await ctx.reply('Got it — I saved your role.');
       await handleOnboardingStep(ctx, newState);
       break;
 
@@ -208,6 +214,7 @@ export async function handleOnboardingText(
       newState.interests = text.trim().slice(0, 500);
       newState.step = nextOnboardingStep(state.step);
       await saveOnboardingState(newState);
+      await ctx.reply('Got it — I saved that and will use it to make your questions more relevant.');
       await handleOnboardingStep(ctx, newState);
       break;
 

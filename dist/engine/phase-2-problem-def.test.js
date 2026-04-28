@@ -51,7 +51,7 @@ describe('Phase 2 — Problem Validation Gate', () => {
     // ── Vote tallying logic ───────────────────────────────────────────────────────
     describe('Vote tallying contracts', () => {
         const VOTE_SCORES = { clear: 100, refine: 0, unsure: 50 };
-        const CONFIRM_THRESHOLD = 0.5; // 50% clear rate required
+        // Clear requires a strict majority; 50/50 is not enough.
         function computeTally(votes) {
             const clear = votes.filter((v) => v === 'clear').length;
             const refine = votes.filter((v) => v === 'refine').length;
@@ -61,7 +61,7 @@ describe('Phase 2 — Problem Validation Gate', () => {
             const confidenceScore = total > 0 ? Math.round(totalScore / total) : 0;
             const clearRate = total > 0 ? clear / total : 0;
             let status;
-            if (clearRate >= CONFIRM_THRESHOLD && confidenceScore >= 40) {
+            if (clear > total / 2 && confidenceScore >= 40) {
                 status = 'confirmed';
             }
             else if (refine > 0 || confidenceScore < 40) {
@@ -72,13 +72,18 @@ describe('Phase 2 — Problem Validation Gate', () => {
             }
             return { confidenceScore, status, clearRate };
         }
-        it('confirms when clear rate >= 50% and confidence >= 40', () => {
+        it('confirms when clear has a strict majority and confidence >= 40', () => {
             const votes = ['clear', 'clear', 'clear', 'unsure'];
             const result = computeTally(votes);
             expect(result.status).toBe('confirmed');
             expect(result.confidenceScore).toBe(88); // (300+50)/4 = 87.5 → Math.round rounds half to even → 88
         });
-        it('needs_work when refine votes present', () => {
+        it('needs_work when clear does not have a strict majority', () => {
+            const votes = ['clear', 'unsure'];
+            const result = computeTally(votes);
+            expect(result.status).toBe('needs_work');
+        });
+        it('needs_work when refine votes prevent a clear majority', () => {
             const votes = ['clear', 'refine', 'unsure'];
             const result = computeTally(votes);
             expect(result.status).toBe('needs_work');

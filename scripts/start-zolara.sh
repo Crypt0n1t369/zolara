@@ -7,7 +7,7 @@ CLOUDFLARED_LOG="/tmp/cloudflared.log"
 TUNNEL_URL_FILE="/tmp/tunnel_url.txt"
 
 # Try to get tunnel URL from cloudflared PM2 logs first, then from saved file
-TUNNEL_URL=$(pm2 logs cloudflared --nostream 2>/dev/null | grep -o 'https://[^ ]*\.trycloudflare\.com' | head -1)
+TUNNEL_URL=$(pm2 logs cloudflared --nostream 2>/dev/null | grep -o 'https://[^ ]*\.trycloudflare\.com' | tail -1)
 
 if [ -z "$TUNNEL_URL" ] && [ -f "$TUNNEL_URL_FILE" ]; then
   TUNNEL_URL=$(cat "$TUNNEL_URL_FILE" | tr -d '\n')

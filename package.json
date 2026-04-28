@@ -7,6 +7,9 @@
     "dev": "tsx watch src/server/index.ts",
     "build": "tsc",
     "start": "node dist/server/index.js",
+    "test": "vitest run",
+    "spawner:status": "tsx scripts/spawner-server.ts status",
+    "spawner:once": "tsx scripts/spawner-server.ts once",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"

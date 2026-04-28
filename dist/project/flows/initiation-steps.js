@@ -175,10 +175,10 @@ async function sendConfirmConfig(ctx, state) {
 }
 async function sendBotCreation(ctx, state) {
     await ctx.reply('⏳ Creating your project bot...');
-    const { createPendingProject, buildProjectCreationLink } = await import('../../manager/managed-bots/creation');
+    const { createPendingProject } = await import('../managed-bots/creation');
     const projectName = state.config.name ?? 'My Project';
     try {
-        const { projectId, pendingKey } = await createPendingProject({
+        const { projectId, pendingKey, suggestedUsername, creationLink } = await createPendingProject({
             adminTelegramId: state.telegramId,
             name: projectName,
             description: state.config.description ?? '',
@@ -192,7 +192,6 @@ async function sendBotCreation(ctx, state) {
             forumTopicsEnabled: ['6-12', '13-30', '30+'].includes(state.config.teamSizeRange ?? ''),
             reportDestination: 'group',
         });
-        const { creationLink, suggestedUsername } = buildProjectCreationLink(projectName);
         await redis.setex(`pending:${state.telegramId}`, 86400, JSON.stringify({
             projectId,
             pendingKey,
@@ -206,6 +205,9 @@ async function sendBotCreation(ctx, state) {
             `Tap the link below to create your project's bot in Telegram:\n\n` +
             `[Create ${escapedName} Bot](${creationLink})\n\n` +
             `This opens BotFather — just tap "Yes" to approve.\n` +
+            `Suggested username: \`@${suggestedUsername}\`
+
+` +
             `I'll automatically finish setup once it's created.`, { parse_mode: 'Markdown' });
     }
     catch (err) {

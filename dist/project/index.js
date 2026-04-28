@@ -1,16 +1,25 @@
 /**
- * Zolara Bot — consolidated single bot handler
- * Handles both admin commands and member interactions on @Zolara_bot
+ * Zolara Bot — admin control plane
+ * Handles admin commands via @Zolara_bot (long polling).
+ * Member interactions on project bots route through webhook via server/index.ts.
  *
  * Admin flow: /create, /startround, /cancelround, /projects, /members, /invite, /status
  * Member flow: /start claim_xxx → commitment → onboarding → question answering
  */
 import { Bot, InlineKeyboard } from 'grammy';
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+/**
+ * Use ctx.api.answerCallbackQuery to avoid grammY internal
+ * abort-signal conflicts when answering a callback multiple times.
+ */
+async function answerCb(ctx, text, showAlert = false) {
+    await ctx.api.answerCallbackQuery(ctx.callbackQuery.id, { text, show_alert: showAlert });
+}
 import { config } from '../config';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
-import { projects, admins, members, rounds } from '../data/schema/projects';
-import { eq, desc, and } from 'drizzle-orm';
+import { projects, admins, members, rounds, users } from '../data/schema/projects';
+import { eq, desc, and, ne } from 'drizzle-orm';
 import { db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
 import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
@@ -20,7 +29,9 @@ import { handleAddAdminCommand, handleRemoveAdminCommand, handleTransferOwnershi
 import { nextStep, } from './flows/initiation-state';
 import { handleInitiationStep, handleCallback, } from './flows/initiation-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState, } from './flows/claim-steps';
-import { loadOnboardingState, clearOnboardingState, } from './flows/onboarding-steps';
+import { handleOnboardingText, loadOnboardingState, saveOnboardingState, clearOnboardingState, } from './flows/onboarding-steps';
+import { handleAIHelp } from './ai-help';
+import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
 // ── Bot ───────────────────────────────────────────────────────────────────────
 const zolaraBot = new Bot(config.ZOLARA_BOT_TOKEN);
 // ── State helpers ─────────────────────────────────────────────────────────────
@@ -36,6 +47,45 @@ async function clearInitState(telegramId) {
 }
 // ── Commands: Admin ───────────────────────────────────────────────────────────
 zolaraBot.command('start', async (ctx) => {
+    const args = ctx.match || '';
+    const userId = ctx.from.id;
+    // Pattern: /start claim_xxx → member commitment gate
+    if (args.startsWith('claim_')) {
+        const projectId = args.replace('claim_', '').trim();
+        if (projectId) {
+            await handleMemberClaim(ctx, userId, projectId);
+            return;
+        }
+    }
+    // Pattern: /start join_xxx → legacy, redirect to claim
+    if (args.startsWith('join_')) {
+        const projectId = args.replace('join_', '').trim();
+        if (projectId) {
+            await handleMemberClaim(ctx, userId, projectId);
+            return;
+        }
+    }
+    // Pattern: /start createbot_xxx → user confirmed bot creation via BotFather
+    if (args.startsWith('createbot_')) {
+        const projectId = args.replace('createbot_', '').trim();
+        if (projectId) {
+            const [proj] = await db.select({
+                botTelegramId: projects.botTelegramId,
+                name: projects.name,
+                botUsername: projects.botUsername,
+            }).from(projects).where(eq(projects.id, projectId)).limit(1);
+            if (proj?.botTelegramId) {
+                const username = proj.botUsername ? `@${proj.botUsername}` : 'your project bot';
+                await ctx.reply(`✅ Bot already created for *${proj.name}*!\n\n` +
+                    `Meet ${username} — your project's assistant is ready.`, { parse_mode: 'Markdown' });
+            }
+            else {
+                await ctx.reply(`🔧 To create your project bot, click the link in the /create flow message.\n\n` +
+                    `Once your bot is created, come back here and we'll complete the setup!`);
+            }
+            return;
+        }
+    }
     await ctx.reply('🌀 *Zolara* — AI Consensus Engine\n\n' +
         'I help teams find alignment through structured perspective gathering.\n\n' +
         '/create — Set up a new project\n' +
@@ -49,7 +99,13 @@ zolaraBot.command('help', async (ctx) => {
         '2️⃣ *Invite* members via the link from /invite\n' +
         '3️⃣ *Start a round* to gather perspectives (/startround)\n' +
         '4️⃣ *Receive* an AI synthesis report in your group\n' +
-        '5️⃣ *Deepen* alignment through follow-up rounds', { parse_mode: 'Markdown' });
+        '5️⃣ *Deepen* alignment through follow-up rounds\n\n' +
+        '💬 Ask me anything in natural language — type your question below!', { parse_mode: 'Markdown' });
+});
+zolaraBot.command('helpme', async (ctx) => {
+    const raw = ctx.message?.text ?? '';
+    const msg = raw.replace('/helpme', '').trim();
+    await handleAIHelp(ctx, ctx.from.id, msg || 'What can you help me with?');
 });
 zolaraBot.command('create', async (ctx) => {
     const userId = ctx.from.id;
@@ -85,22 +141,98 @@ zolaraBot.command('cancel', async (ctx) => {
     await ctx.reply('Nothing to cancel.');
 });
 // ── Admin: Project Management ──────────────────────────────────────────────────
+/**
+ * Redis key for admin's currently selected project (30min TTL).
+ */
+const PROJECT_SELECTION_TTL = 1800; // 30 minutes
+function projectSelectionKey(telegramId) {
+    return `selected_project:${telegramId}`;
+}
+/**
+ * Build an inline keyboard for project selection.
+ */
+function statusIcon(s) {
+    if (s === 'active')
+        return '🟢';
+    if (s === 'archived')
+        return '🟠';
+    if (s === 'pending')
+        return '🟡';
+    return '⚪';
+}
+function buildProjectKeyboard(choices, selectedId) {
+    const kb = new InlineKeyboard();
+    for (const p of choices) {
+        if (p.status === 'deleted')
+            continue; // never show deleted in list
+        const icon = statusIcon(p.status);
+        const check = p.id === selectedId ? ' ✅' : '';
+        kb.text(`${icon} ${p.name}${check}`, `project:select:${p.id}`).text('⚙️', `project:manage:${p.id}`).row();
+    }
+    return kb;
+}
+/**
+ * Build an inline keyboard for project management (⚙️ button → status-aware actions)
+ * active   → Archive / Delete
+ * archived → Restore / Delete
+ * pending  → Delete (nothing to archive yet)
+ */
+function buildProjectManageKeyboard(projectId, status) {
+    const kb = new InlineKeyboard();
+    if (status === 'active') {
+        kb.text('📦 Archive', `project:archive:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+    }
+    else if (status === 'archived') {
+        kb.text('↩️ Restore', `project:restore:${projectId}`).text('🗑 Delete', `project:delete:${projectId}`).row();
+    }
+    else if (status === 'pending') {
+        kb.text('🗑 Delete', `project:delete:${projectId}`).row();
+    }
+    kb.text('🔙 Back', 'project:back');
+    return kb;
+}
+/**
+ * Resolve the admin's currently selected project.
+ * Checks Redis cache first → falls back to default (active project or most recent).
+ */
 async function resolveAdminProject(adminTelegramId) {
+    // Check Redis cache first
+    const cachedId = await redis.get(projectSelectionKey(adminTelegramId));
+    if (cachedId) {
+        const [row] = await db
+            .select({ id: projects.id, name: projects.name, status: projects.status, botUsername: projects.botUsername })
+            .from(projects)
+            .where(eq(projects.id, cachedId))
+            .limit(1);
+        if (row) {
+            return {
+                project: { id: row.id, name: row.name ?? 'Unknown', status: row.status ?? 'pending', botUsername: row.botUsername },
+                hasMultiple: false,
+                choices: [],
+            };
+        }
+        // Stale cache entry — delete it
+        await redis.del(projectSelectionKey(adminTelegramId));
+    }
     const rows = await db
-        .select({ id: projects.id, name: projects.name, status: projects.status })
+        .select({ id: projects.id, name: projects.name, status: projects.status, botUsername: projects.botUsername })
         .from(projects)
         .innerJoin(admins, eq(admins.id, projects.adminId))
-        .where(eq(admins.telegramId, adminTelegramId))
+        .where(and(eq(admins.telegramId, adminTelegramId), ne(projects.status, 'deleted')))
         .orderBy(desc(projects.createdAt))
         .limit(10);
-    if (rows.length === 0)
+    if (rows.length === 0) {
+        console.log('[DEBUG resolveAdmin] no rows for telegramId', adminTelegramId);
         return { project: null, hasMultiple: false, choices: [] };
+    }
+    console.log('[DEBUG resolveAdmin] got', rows.length, 'projects for', adminTelegramId);
     const active = rows.filter((r) => r.status === 'active');
     const first = active[0] ?? rows[0];
     const project = {
         id: first.id,
         name: first.name ?? 'Unknown',
         status: first.status ?? 'pending',
+        botUsername: first.botUsername,
     };
     return {
         project,
@@ -110,19 +242,25 @@ async function resolveAdminProject(adminTelegramId) {
 }
 zolaraBot.command('projects', async (ctx) => {
     const { project, hasMultiple, choices } = await resolveAdminProject(ctx.from.id);
+    console.log('[DEBUG /projects] telegramId=', ctx.from.id, 'hasMultiple=', hasMultiple, 'choices count=', choices.length, 'project=', project?.name);
     if (!project) {
         await ctx.reply("You don't have any projects yet.\n\nUse /create to set one up.");
         return;
     }
-    if (hasMultiple) {
-        const lines = choices.map((c, i) => `${i + 1}. *${c.name}* — ${c.status}`).join('\n');
-        await ctx.reply(`*Your projects:*\n\n${lines}\n\nCurrently selected: *${project.name}*\n\nUse /startround, /cancelround, or /members on the selected project.`);
+    const allChoices = choices.length > 0 ? choices : (project ? [{ id: project.id, name: project.name, status: project.status }] : []);
+    console.log('[DEBUG /projects] allChoices count=', allChoices.length);
+    if (allChoices.length === 0) {
+        await ctx.reply("You don't have any projects yet.\n\nUse /create to set one up.");
         return;
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [round] = await db.select({ id: rounds.id, roundNumber: rounds.roundNumber, status: rounds.status }).from(rounds).where(eq(rounds.projectId, project.id)).limit(1);
-    const status = round ? `Round #${round.roundNumber} — *${round.status}*` : 'No active round';
-    await ctx.reply(`*${project.name}*\n\nStatus: ${project.status}\nCurrent round: ${status}`, { parse_mode: 'Markdown' });
+    const escapeHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const lines = allChoices.map((p) => `${statusIcon(p.status)} ${escapeHtml(p.name)}`).join('\n');
+    const selectedId = project?.id;
+    await ctx.reply(`<b>Your projects:</b>\n\n${lines}\n\nTap a name to select it. Tap [Settings] to manage.`, {
+        parse_mode: 'HTML',
+        reply_markup: buildProjectKeyboard(allChoices, selectedId),
+    });
+    return;
 });
 zolaraBot.command('startround', async (ctx) => {
     const telegramId = ctx.from.id;
@@ -131,7 +269,14 @@ zolaraBot.command('startround', async (ctx) => {
         await ctx.reply("You don't have any projects yet. Use /create to set one up.");
         return;
     }
-    const topic = ctx.match.trim() || 'General check-in';
+    const topic = ctx.match.trim();
+    if (!topic || topic.length < 12) {
+        await ctx.reply('Please start the round with a clear objective.\n\n' +
+            'Example:\n' +
+            '/startround Align on the first onboarding experience for new Zolara teams\n\n' +
+            'The topic should describe what the team is trying to decide, understand, or improve.');
+        return;
+    }
     try {
         // Use Phase 2 validation flow if flag is active, otherwise fall back to baseline
         if (isPhaseActive('PHASE_PROBLEM_DEF')) {
@@ -207,9 +352,18 @@ zolaraBot.command('invite', async (ctx) => {
         await ctx.reply("You don't have any projects yet.");
         return;
     }
-    // Always use @Zolara_bot for invite links (single-bot mode)
-    const inviteLink = `https://t.me/Zolara_bot?start=claim_${project.id}`;
-    await ctx.reply(`*${project.name} - Invite Link*\n\nShare this with your team:\n\n${inviteLink}\n\nMembers tap "Yes, I'm in" to join and receive questions.`, { parse_mode: 'Markdown' });
+    // Look up the project to get the actual bot username
+    const [proj] = await db
+        .select({ name: projects.name, botUsername: projects.botUsername })
+        .from(projects)
+        .where(eq(projects.id, project.id))
+        .limit(1);
+    const botUsername = proj?.botUsername ?? 'Zolara_bot';
+    const inviteLink = `https://t.me/${botUsername}?start=claim_${project.id}`;
+    await ctx.reply(`*${project.name} - Invite Link*\n\n` +
+        `Share this with your team:\n\n` +
+        `${inviteLink}\n\n` +
+        `Members tap "Yes, I'm in" to join and receive questions.`, { parse_mode: 'Markdown' });
 });
 zolaraBot.command('status', async (ctx) => {
     const { project } = await resolveAdminProject(ctx.from.id);
@@ -346,7 +500,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (data.startsWith('admin:confirm_group:') || data.startsWith('admin:reject_group:')) {
         const { project } = await resolveAdminProject(userId);
         if (!project) {
-            await ctx.answerCallbackQuery('No project found.');
+            await answerCb(ctx, '');
             return;
         }
         await handleAdminGroupCallback(ctx, data, userId, project.id);
@@ -361,7 +515,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (data.startsWith('init:')) {
         const state = await loadInitState(userId);
         if (!state) {
-            await ctx.answerCallbackQuery('Session expired. Use /create to start again.');
+            await answerCb(ctx, '');
             return;
         }
         const newState = await handleCallback(ctx, state, data);
@@ -375,7 +529,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (data.startsWith('claim:')) {
         const state = await loadClaimState(userId);
         if (!state) {
-            await ctx.answerCallbackQuery('Session expired. Send /start to begin again.');
+            await answerCb(ctx, '');
             return;
         }
         await handleClaimCallback(ctx, state, data);
@@ -385,7 +539,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     if (data.startsWith('onboard:')) {
         const state = await loadOnboardingState(userId);
         if (!state) {
-            await ctx.answerCallbackQuery('Session expired. Send /start to begin again.');
+            await answerCb(ctx, '');
             return;
         }
         await handleOnboardingCallback(ctx, state, data);
@@ -394,19 +548,19 @@ zolaraBot.on('callback_query:data', async (ctx) => {
     // Report reaction callbacks (group members reacting to synthesis)
     if (data.startsWith('reaction:')) {
         const [, projectId, roundNumber, reaction] = data.split(':');
-        await ctx.answerCallbackQuery(`You reacted: ${reaction}`);
+        await answerCb(ctx, 'Done');
         // Store reaction in DB
         try {
             const { engagementEvents } = await import('../data/schema/projects');
             const { db } = await import('../data/db');
             const { users, members } = await import('../data/schema/projects');
-            const { eq } = await import('drizzle-orm');
-            // Find member by telegram ID
+            const { eq, and } = await import('drizzle-orm');
+            // Find member by telegram ID scoped to this project
             const [memberRow] = await db
                 .select({ memberId: members.id })
                 .from(members)
                 .innerJoin(users, eq(members.userId, users.id))
-                .where(eq(users.telegramId, userId))
+                .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
                 .limit(1);
             if (memberRow) {
                 await db.insert(engagementEvents).values({
@@ -433,21 +587,21 @@ zolaraBot.on('callback_query:data', async (ctx) => {
             const { parseValidationCallback, handleVoteCallback, handleTopicCallback } = await import('../engine/phases/phase-2-problem-def/telegram-ui');
             const parsed = parseValidationCallback(data);
             if (!parsed) {
-                await ctx.answerCallbackQuery('❌ Invalid callback');
+                await answerCb(ctx, '');
                 return;
             }
             if (parsed.action === 'vote') {
                 const result = await handleVoteCallback(parsed.problemDefinitionId, parsed.vote, userId);
-                await ctx.answerCallbackQuery(result.text, { show_alert: result.alert });
+                await answerCb(ctx, result.text, result.alert);
             }
             else if (parsed.action === 'topic') {
                 const result = await handleTopicCallback(parsed.problemDefinitionId);
-                await ctx.answerCallbackQuery(result.text, { show_alert: result.alert });
+                await answerCb(ctx, result.text, result.alert);
             }
         }
         catch (err) {
             console.error('[Validation] Callback error:', err);
-            await ctx.answerCallbackQuery('❌ Error processing vote');
+            await answerCb(ctx, '');
         }
         return;
     }
@@ -456,7 +610,7 @@ zolaraBot.on('callback_query:data', async (ctx) => {
         // Verify admin
         const { project } = await resolveAdminProject(userId);
         if (!project) {
-            await ctx.answerCallbackQuery('❌ Admin access required.');
+            await answerCb(ctx, '');
             return;
         }
         const parts = data.split(':');
@@ -464,25 +618,25 @@ zolaraBot.on('callback_query:data', async (ctx) => {
         if (action === 'refresh' || action === 'back') {
             const flags = listRuntimeFlags();
             await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(flags) });
-            await ctx.answerCallbackQuery('🔄 Refreshed');
+            await answerCb(ctx, '');
             return;
         }
         if (action === 'detail') {
             const key = parts[2];
             if (!key || !VALID_PHASES.includes(key)) {
-                await ctx.answerCallbackQuery('❌ Unknown phase');
+                await answerCb(ctx, '');
                 return;
             }
             const flags = listRuntimeFlags();
             const value = flags[key] ?? 'disabled';
             await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseDetailKeyboard(key, value) });
-            await ctx.answerCallbackQuery(PHASE_SHORT[key] ?? key);
+            await answerCb(ctx, PHASE_SHORT[key] ?? key);
             return;
         }
         if (action === 'toggle') {
             const key = parts[2];
             if (!key || !VALID_PHASES.includes(key)) {
-                await ctx.answerCallbackQuery('❌ Unknown phase');
+                await answerCb(ctx, '');
                 return;
             }
             const flags = listRuntimeFlags();
@@ -492,14 +646,99 @@ zolaraBot.on('callback_query:data', async (ctx) => {
             const updatedFlags = listRuntimeFlags();
             await ctx.editMessageReplyMarkup({ reply_markup: buildPhaseKeyboard(updatedFlags) });
             const label = PHASE_SHORT[key] ?? key;
-            await ctx.answerCallbackQuery(`✅ ${label} → ${next}`, { show_alert: true });
+            await answerCb(ctx, `✅ ${label} → ${next}`, true);
             return;
         }
         if (action === 'noop') {
-            await ctx.answerCallbackQuery(' ');
+            await answerCb(ctx, '');
             return;
         }
-        await ctx.answerCallbackQuery(' ');
+        await answerCb(ctx, '');
+        return;
+    }
+    // Project selection callbacks
+    if (data.startsWith('project:select:')) {
+        const projectId = data.split(':')[2];
+        if (!projectId) {
+            await answerCb(ctx, '❌ Invalid selection');
+            return;
+        }
+        const { choices } = await resolveAdminProject(userId);
+        const valid = choices.find((c) => c.id === projectId);
+        if (!valid) {
+            await answerCb(ctx, '❌ Project not found');
+            return;
+        }
+        await redis.setex(projectSelectionKey(userId), PROJECT_SELECTION_TTL, projectId);
+        await answerCb(ctx, `✅ ${valid.name} selected`, true);
+        await ctx.editMessageReplyMarkup({ reply_markup: buildProjectKeyboard(choices, projectId) });
+        return;
+    }
+    // Project management: show detail keyboard (⚙️ button)
+    if (data.startsWith('project:manage:')) {
+        const projectId = data.split(':')[2];
+        if (!projectId) {
+            await answerCb(ctx, '❌ Invalid');
+            return;
+        }
+        const [proj] = await db.select({ id: projects.id, name: projects.name, status: projects.status }).from(projects).where(eq(projects.id, projectId)).limit(1);
+        if (!proj) {
+            await answerCb(ctx, '❌ Project not found');
+            return;
+        }
+        const statusLabel = proj.status === 'active' ? '🟢 Active' : proj.status === 'archived' ? '📦 Archived' : `⚪ ${proj.status}`;
+        const escapeHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        await ctx.editMessageText(`<b>${escapeHtml(proj.name)}</b>\n\nStatus: ${statusLabel}\n\nWhat do you want to do?`, { parse_mode: 'HTML', reply_markup: buildProjectManageKeyboard(projectId, proj.status ?? 'pending') });
+        await answerCb(ctx, ' ');
+        return;
+    }
+    // Archive a project (30-day soft delete, data preserved)
+    if (data.startsWith('project:archive:')) {
+        const projectId = data.split(':')[2];
+        if (!projectId) {
+            await answerCb(ctx, '❌ Invalid');
+            return;
+        }
+        await db.update(projects).set({ status: 'archived', updatedAt: new Date() }).where(eq(projects.id, projectId));
+        await suspendProjectAgent(projectId);
+        await answerCb(ctx, '📦 Project archived — data kept 30 days', true);
+        return;
+    }
+    // Delete a project (30-day soft delete, data preserved)
+    if (data.startsWith('project:delete:')) {
+        const projectId = data.split(':')[2];
+        if (!projectId) {
+            await answerCb(ctx, '❌ Invalid');
+            return;
+        }
+        await db.update(projects).set({ status: 'deleted', updatedAt: new Date() }).where(eq(projects.id, projectId));
+        await deleteProjectAgent(projectId);
+        await answerCb(ctx, '🗑 Project deleted — data kept 30 days', true);
+        return;
+    }
+    // Restore an archived project
+    if (data.startsWith('project:restore:')) {
+        const projectId = data.split(':')[2];
+        if (!projectId) {
+            await answerCb(ctx, '❌ Invalid');
+            return;
+        }
+        await db.update(projects).set({ status: 'active', updatedAt: new Date() }).where(eq(projects.id, projectId));
+        await restoreProjectAgent(projectId);
+        await answerCb(ctx, '↩️ Project restored', true);
+        return;
+    }
+    // Back to project list
+    if (data === 'project:back') {
+        const { choices } = await resolveAdminProject(userId);
+        if (!choices.length) {
+            await answerCb(ctx, 'No projects');
+            return;
+        }
+        const escapeHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const lines = choices.map((p) => `${statusIcon(p.status)} ${escapeHtml(p.name)}`).join('\n');
+        await ctx.editMessageText(`<b>Your projects:</b>\n\n${lines}\n\nTap a name to select it. Tap [Settings] to manage.`, { parse_mode: 'HTML', reply_markup: buildProjectKeyboard(choices) });
+        await answerCb(ctx, ' ');
         return;
     }
 });
@@ -507,72 +746,22 @@ async function handleAdminGroupCallback(ctx, data, adminTelegramId, projectId) {
     const action = data.split(':')[1];
     const detectData = await redis.get(`group_detect:${projectId}`);
     if (!detectData) {
-        await ctx.answerCallbackQuery('Session expired.');
+        await answerCb(ctx, '');
         return;
     }
     const { groupId, groupTitle } = JSON.parse(detectData);
     if (action === 'confirm') {
         await db.update(projects).set({ groupIds: [groupId] }).where(eq(projects.id, projectId));
         await redis.del(`group_detect:${projectId}`);
-        await ctx.answerCallbackQuery(`✅ Reports will go to ${groupTitle}`);
+        await answerCb(ctx, 'Group set!');
         await ctx.reply(`✅ *Group set!*\n\nRound reports will now be posted to *${groupTitle}*.`, { parse_mode: 'Markdown' });
     }
     else {
         await redis.del(`group_detect:${projectId}`);
-        await ctx.answerCallbackQuery('Dismissed.');
+        await answerCb(ctx, 'Cancelled');
         await ctx.reply('No problem. When I\'m added to the correct group, I\'ll ask again.');
     }
 }
-// ── Member: /start with claim_ routing ───────────────────────────────────────
-zolaraBot.command('start', async (ctx) => {
-    const args = ctx.match || '';
-    const userId = ctx.from.id;
-    // Pattern: /start claim_xxx → member commitment gate
-    if (args.startsWith('claim_')) {
-        const projectId = args.replace('claim_', '').trim();
-        if (projectId) {
-            await handleMemberClaim(ctx, userId, projectId);
-            return;
-        }
-    }
-    // Pattern: /start join_xxx → legacy, redirect to claim
-    if (args.startsWith('join_')) {
-        const projectId = args.replace('join_', '').trim();
-        if (projectId) {
-            await handleMemberClaim(ctx, userId, projectId);
-            return;
-        }
-    }
-    // Pattern: /start createbot_xxx → user confirmed bot creation via BotFather
-    // This is sent after the user clicks the creation link in the creation flow
-    if (args.startsWith('createbot_')) {
-        const projectId = args.replace('createbot_', '').trim();
-        if (projectId) {
-            // Look up project and check if bot is already finalized
-            const [proj] = await db.select({
-                botTelegramId: projects.botTelegramId,
-                name: projects.name,
-            }).from(projects).where(eq(projects.id, projectId)).limit(1);
-            if (proj?.botTelegramId) {
-                // Bot already created and finalized
-                await ctx.reply(`✅ Bot already created for *${proj.name}*!\n\n` +
-                    `Meet @Zolara_bot — your project's assistant is ready.`, { parse_mode: 'Markdown' });
-            }
-            else {
-                // Bot not yet created — guide user
-                await ctx.reply(`🔧 To create your project bot, click the link in the /create flow message.\n\n` +
-                    `Once your bot is created, come back here and we'll complete the setup!`);
-            }
-            return;
-        }
-    }
-    // Regular /start
-    await ctx.reply('🏠 *Welcome to Zolara*\n\n' +
-        'Your team\'s AI consensus engine.\n\n' +
-        '/help — Learn more\n' +
-        '/status — Current round status\n' +
-        '/profile — Your member profile', { parse_mode: 'Markdown' });
-});
 // ── Managed Bot Creation & Group Auto-Detection ────────────────────────────────
 // Two distinct events come through my_chat_member:
 // 1. managed_bot_created: new bot was created via creation link (chat=private, new_member=bot)
@@ -608,6 +797,7 @@ zolaraBot.on('my_chat_member', async (ctx) => {
                 `2️⃣ I'll automatically detect the group and set it as the report destination\n` +
                 `3️⃣ Share this invite link with your team members:\n` +
                 `👉 https://t.me/${botUsername}?start=claim_${projectId}\n\n` +
+                `⏳ Your team coordinator is being set up now — this takes up to 60 seconds.\n` +
                 `Run /startround when your team is ready for the first round!`, { parse_mode: 'Markdown' });
         }
         catch (err) {
@@ -731,6 +921,15 @@ zolaraBot.on('message:text', async (ctx) => {
         await handleInitiationText(ctx, initState, text);
         return;
     }
+    // Member onboarding text input (role, interests steps)
+    const onboardState = await loadOnboardingState(userId);
+    if (onboardState) {
+        const updated = await handleOnboardingText(ctx, onboardState, text);
+        if (updated) {
+            await saveOnboardingState(updated);
+        }
+        return;
+    }
     // Settings reply (admin typing a new value in the interactive settings flow)
     await handleSettingsReply(ctx);
     // Question answering session (member replying to a DM question from a round)
@@ -743,11 +942,9 @@ zolaraBot.on('message:text', async (ctx) => {
             'The synthesis will be posted to your group when the round closes.', { parse_mode: 'Markdown' });
         return;
     }
-    // Fallback for DMs only — basic help prompt
-    // (No free chat; keep Zolara focused on the structured process)
-    await ctx.reply('👋 I\'m here to help with the Zolara consensus process.\n\n' +
-        '/help — See available commands\n' +
-        '/create — Set up a project', { parse_mode: 'Markdown' });
+    // AI help for non-command messages (interpret natural language)
+    console.log('[MessageText] userId=', userId, 'text=', text.substring(0, 100));
+    await handleAIHelp(ctx, userId, text);
 });
 // ── Member Claim Flow ──────────────────────────────────────────────────────────
 async function handleMemberClaim(ctx, userId, projectId) {
@@ -760,7 +957,8 @@ async function handleMemberClaim(ctx, userId, projectId) {
     const [existing] = await db
         .select({ onboardingStatus: members.onboardingStatus })
         .from(members)
-        .where(and(eq(members.projectId, projectId), eq(members.userId, userId)))
+        .innerJoin(users, eq(members.userId, users.id))
+        .where(and(eq(members.projectId, projectId), eq(users.telegramId, userId)))
         .limit(1);
     if (existing && existing.onboardingStatus === 'committed') {
         await ctx.reply(`✅ You're already committed to *${project.name}*.\n\nA round will start soon. I'll DM you when it does.`, { parse_mode: 'Markdown' });
@@ -772,8 +970,18 @@ async function handleMemberClaim(ctx, userId, projectId) {
     await saveClaimState(state);
     await handleClaimWelcome(ctx, state);
 }
+// ── Question detection patterns ─────────────────────────────────────────────────
+const question_patterns = ['what', 'how', 'why', 'when', 'where', 'who', 'which', 'should', 'could', 'can ', 'is ', 'do ', 'does ', 'want', 'tell', 'explain', '?'];
 // ── Initiation text handling ──────────────────────────────────────────────────
 async function handleInitiationText(ctx, state, text) {
+    // Detect if user is asking a question vs providing an answer to the flow
+    const lower = text.trim().toLowerCase();
+    const isQuestion = question_patterns.some((q) => lower.startsWith(q)) || text.trim().endsWith('?');
+    if (isQuestion) {
+        // Route to AI help — answer the question without advancing the flow
+        await handleAIHelp(ctx, state.telegramId, text);
+        return;
+    }
     switch (state.step) {
         case 'project_name': {
             if (text.trim().length < 2) {
@@ -803,11 +1011,22 @@ async function handleInitiationText(ctx, state, text) {
 }
 // ── Response saving ───────────────────────────────────────────────────────────
 async function saveResponse(userId, projectId, roundId, questionId, text) {
-    const { responses } = await import('../data/schema/projects');
+    const { responses, members, users } = await import('../data/schema/projects');
     try {
+        // Look up the actual database member ID from the Telegram user ID
+        const [memberRow] = await db
+            .select({ memberId: members.id })
+            .from(members)
+            .innerJoin(users, eq(members.userId, users.id))
+            .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
+            .limit(1);
+        if (!memberRow) {
+            dbLog.insertFailed('responses', { userId, projectId, reason: 'member_not_found' }, new Error('Member not found'));
+            return;
+        }
         await db.insert(responses).values({
             questionId: questionId,
-            memberId: userId,
+            memberId: memberRow.memberId,
             responseText: text.slice(0, 5000),
             createdAt: new Date(),
         });
@@ -823,7 +1042,7 @@ async function resolveProjectIdFromBot(botTelegramId) {
 }
 // ── Onboarding callback stub ──────────────────────────────────────────────────
 async function handleOnboardingCallback(ctx, state, data) {
-    await ctx.answerCallbackQuery('Onboarding in progress...');
+    await answerCb(ctx, '');
 }
 // ── Exports ───────────────────────────────────────────────────────────────────
 export async function handleZolaraWebhook(update) {

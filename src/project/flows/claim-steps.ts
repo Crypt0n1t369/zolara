@@ -30,7 +30,7 @@ export async function handleClaimWelcome(
   }[state.anonymity] ?? '';
 
   await ctx.reply(
-    `🏠 *${state.projectName}*\n\n` +
+    `🏠 ${state.projectName}\n\n` +
     `You're joining as a team member. Here's what that means:\n\n` +
     `📋 *Your commitment:*\n` +
     `• When a round starts, I'll DM you a question\n` +
@@ -39,7 +39,6 @@ export async function handleClaimWelcome(
     `⚡ *No obligation* — skip a round if you're busy.\n\n` +
     `Ready to commit?`,
     {
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '✅ Yes, I\'m in', callback_data: 'claim:confirm' }],

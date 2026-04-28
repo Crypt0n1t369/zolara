@@ -6,7 +6,7 @@ import { nextOnboardingStep } from './onboarding-state';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 // ── Step Renderers ────────────────────────────────────────────────────────────
 async function sendWelcome(ctx, state) {
     // Look up project name from DB
@@ -18,19 +18,20 @@ async function sendWelcome(ctx, state) {
         .where(eq(projects.id, state.projectId))
         .limit(1);
     const projectName = project?.name ?? 'the project';
-    const projectGoal = project?.description ?? '';
-    await ctx.reply(`👋 Welcome to *${projectName}*!\n\n` +
+    await ctx.reply(`👋 Welcome to ${projectName}!\n\n` +
         "I'm your team's AI assistant. I'll periodically check in with you " +
         "privately to understand your perspective, then share synthesized insights with the whole group.\n\n" +
-        "Let me learn a bit about you so I can work with you effectively.", { parse_mode: 'Markdown' });
-    // Move to next step after a short delay
+        "Let me learn a bit about you so I can work with you effectively.");
+    // Advance immediately to the first question; otherwise users see a welcome
+    // message but do not know what to answer next.
     state.step = nextOnboardingStep(state.step);
     await saveOnboardingState(state);
     await sendRole(ctx, state);
 }
 async function sendRole(ctx, state) {
     await ctx.reply("What's your *role* or connection to this project?\n\n" +
-        'For example: "Team lead", "Designer", "Stakeholder", "New member"', { parse_mode: 'Markdown' });
+        'For example: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
+        'Reply with a short phrase. If another Zolara message arrives meanwhile, your next typed reply will still be saved here.', { parse_mode: 'Markdown' });
 }
 async function sendInterests(ctx, state) {
     // Look up project goal for contextual question
@@ -43,10 +44,11 @@ async function sendInterests(ctx, state) {
     const goalText = project?.description
         ? `\n\nThe project goal is: "${project.description.slice(0, 200)}"`
         : '';
-    await ctx.reply(`What aspects of this project are you most *interested* in or knowledgeable about?${goalText}`, { parse_mode: 'Markdown' });
+    await ctx.reply(`What aspects of this project are you most interested in or knowledgeable about?${goalText}`);
 }
 async function sendAvailability(ctx, state) {
-    await ctx.reply('How much *time* per week can you dedicate to this?', {
+    await ctx.reply('Roughly how much *time* per week can you dedicate to this?\n\n' +
+        'This helps Zolara pace check-ins and avoid overloading you. An estimate is fine.', {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
@@ -57,6 +59,9 @@ async function sendAvailability(ctx, state) {
                 [
                     { text: '3-5 hours', callback_data: 'onboard:availability:3-5_hrs' },
                     { text: '5+ hours', callback_data: 'onboard:availability:5+_hrs' },
+                ],
+                [
+                    { text: 'Not sure yet', callback_data: 'onboard:availability:not_sure' },
                 ],
             ],
         },
@@ -122,15 +127,19 @@ export async function handleOnboardingCallback(ctx, state, data) {
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
             await handleOnboardingStep(ctx, newState);
-            break;
+            await ctx.answerCallbackQuery('Got it, thanks!');
+            return newState;
         case 'style':
             newState.communicationStyle = payload;
             newState.step = nextOnboardingStep(state.step);
+            await ctx.answerCallbackQuery('Perfect!');
+            // Persist all collected profile data to DB before clearing state
+            await finalizeOnboarding(newState);
             await clearOnboardingState(state.telegramId);
             await handleOnboardingStep(ctx, newState);
-            break;
+            return newState;
         default:
-            await ctx.answerCallbackQuery();
+            await ctx.answerCallbackQuery('Processing...');
     }
     return null;
 }
@@ -142,12 +151,14 @@ export async function handleOnboardingText(ctx, state, text) {
             newState.role = text.trim().slice(0, 200);
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
+            await ctx.reply('Got it — I saved your role.');
             await handleOnboardingStep(ctx, newState);
             break;
         case 'interests':
             newState.interests = text.trim().slice(0, 500);
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
+            await ctx.reply('Got it — I saved that and will use it to make your questions more relevant.');
             await handleOnboardingStep(ctx, newState);
             break;
         default:
@@ -181,7 +192,7 @@ export async function finalizeOnboarding(state) {
     const [member] = await db
         .select()
         .from(members)
-        .where(eq(members.projectId, projectId))
+        .where(and(eq(members.projectId, projectId), eq(members.userId, userId)))
         .limit(1);
     const projectProfile = {
         interests: state.interests ?? '',

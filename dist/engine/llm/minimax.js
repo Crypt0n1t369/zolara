@@ -1,6 +1,16 @@
 import { config } from '../../config';
 import { llm as llmLog } from '../../util/logger';
 const MINIMAX_API_URL = 'https://api.minimax.io/v1/chat/completions';
+/**
+ * Some reasoning models may return hidden chain-of-thought inside <think> tags.
+ * Never surface that to Telegram users; keep only the final answer.
+ */
+export function stripThinkingTags(text) {
+    return text
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/<think>[\s\S]*$/gi, '')
+        .trim();
+}
 export class MiniMaxProvider {
     apiKey;
     model;
@@ -62,7 +72,7 @@ export class MiniMaxProvider {
             llmLog.apiError(msg, { model });
             throw new Error(msg);
         }
-        const text = data.choices?.[0]?.message?.content ?? '';
+        const text = stripThinkingTags(data.choices?.[0]?.message?.content ?? '');
         let parsed = null;
         if (params.responseFormat === 'json' && text) {
             try {

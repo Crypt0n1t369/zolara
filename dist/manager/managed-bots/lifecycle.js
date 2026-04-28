@@ -93,20 +93,31 @@ export async function getManagedBotInfo(botUserId) {
  * Format: {project_name_slug}_zolara_{random4}
  */
 export function generateBotUsername(projectName) {
-    const slug = projectName
+    // Telegram usernames are 5-32 chars, may contain a-z, 0-9 and underscores,
+    // and bot usernames must end in "bot". Keep the suggestion safely short so
+    // BotFather never asks the admin to manually delete random characters.
+    const suffix = '_zol_bot';
+    const maxTotal = 32;
+    const maxSlug = maxTotal - suffix.length;
+    let slug = projectName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_|_$/g, '')
-        .slice(0, 22); // leave room for suffix
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    const rand = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    return `${slug}_zol_${rand}`;
+        .replace(/^_+|_+$/g, '')
+        .slice(0, maxSlug)
+        .replace(/_+$/g, '');
+    if (!slug)
+        slug = 'team';
+    if (slug.length < 2)
+        slug = `${slug}_team`;
+    return `${slug}${suffix}`.slice(0, maxTotal);
 }
 /**
  * Build the Telegram BotFather creation link for a new managed bot.
  * The manager bot username is the Zolara manager bot (@Zolara_builder_bot).
  */
 export function buildCreationLink(managerUsername, suggestedUsername, botName) {
-    const encodedName = encodeURIComponent(botName);
+    // Bot display names are also length-limited in Telegram/BotFather UI.
+    const safeName = botName.trim().slice(0, 64) || 'Zolara Project';
+    const encodedName = encodeURIComponent(safeName);
     return `https://t.me/newbot/${managerUsername}/${suggestedUsername}?name=${encodedName}`;
 }

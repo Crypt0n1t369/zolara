@@ -5,10 +5,11 @@
  * Takes ~10 seconds. Member confirms they want to participate.
  * After this: bot can reach them, they can reach the bot.
  */
+import { handleOnboardingStep, saveOnboardingState } from './onboarding-steps';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 const CLAIM_TTL = 86400; // 24 hours
 // ── Claim Welcome ─────────────────────────────────────────────────────────────
 export async function handleClaimWelcome(ctx, state) {
@@ -17,7 +18,7 @@ export async function handleClaimWelcome(ctx, state) {
         optional: '• Responses are anonymous unless you choose to be credited\n• Teammates won' + "'" + 't know who said what unless you opt in',
         attributed: '• Your name is shown in the group report alongside your response\n• Teammates will know what you personally said',
     }[state.anonymity] ?? '';
-    await ctx.reply(`🏠 *${state.projectName}*\n\n` +
+    await ctx.reply(`🏠 ${state.projectName}\n\n` +
         `You're joining as a team member. Here's what that means:\n\n` +
         `📋 *Your commitment:*\n` +
         `• When a round starts, I'll DM you a question\n` +
@@ -25,7 +26,6 @@ export async function handleClaimWelcome(ctx, state) {
         `${anonNote}\n\n` +
         `⚡ *No obligation* — skip a round if you're busy.\n\n` +
         `Ready to commit?`, {
-        parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [{ text: '✅ Yes, I\'m in', callback_data: 'claim:confirm' }],
@@ -41,15 +41,20 @@ export async function handleClaimCallback(ctx, state, data) {
         await ctx.answerCallbackQuery('Welcome aboard! 🎉');
         await finalizeClaim(state);
         await clearClaimState(state.telegramId);
-        await ctx.reply(`🎉 *You're in!*\n\n` +
-            `Your commitment is recorded. Here's what happens next:\n\n` +
-            `📅 *When a round starts:*\n` +
-            `I'll DM you a question. Reply with your perspective.\n\n` +
-            `📊 *After the round:*\n` +
-            `A synthesized report goes to your team group.\n` +
-            `Your identity stays private.\n\n` +
-            `Type /status to check if a round is active.\n` +
-            `Type /profile to update your info anytime.`, { parse_mode: 'Markdown' });
+        // Transition to Phase 2 onboarding (O1-O6)
+        const onboardingState = {
+            phase: 'onboarding',
+            projectId: state.projectId,
+            telegramId: state.telegramId,
+            step: 'welcome',
+            createdAt: new Date().toISOString(),
+        };
+        await saveOnboardingState(onboardingState);
+        // Send "You're in" first, then kick off onboarding
+        await ctx.reply(`🎉 *You're in!*
+
+Your commitment is recorded. Let me learn a bit about you so I can work with you effectively.`, { parse_mode: 'Markdown' });
+        await handleOnboardingStep(ctx, onboardingState);
         return;
     }
     if (action === 'decline') {
@@ -78,10 +83,11 @@ async function finalizeClaim(state) {
         userId = user.id;
     }
     // Upsert member — committed status means bot can now DM them
+    // Filter by BOTH projectId and userId to avoid updating the wrong member
     const [existing] = await db
         .select()
         .from(members)
-        .where(eq(members.projectId, state.projectId))
+        .where(and(eq(members.projectId, state.projectId), eq(members.userId, userId)))
         .limit(1);
     if (existing) {
         await db

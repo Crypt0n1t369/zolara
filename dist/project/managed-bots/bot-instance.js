@@ -12,14 +12,15 @@
  * - Report reactions
  */
 import { Bot } from 'grammy';
+import { llm } from '../../engine/llm/minimax';
 import { config } from '../../config';
 import { db } from '../../data/db';
 import { projects, members, users, rounds, responses } from '../../data/schema/projects';
 import { eq, and } from 'drizzle-orm';
 import { redis } from '../../data/redis';
 import { nextOnboardingStep, } from '../flows/onboarding-state';
-import { loadOnboardingState, saveOnboardingState, handleOnboardingCallback, } from '../flows/onboarding-steps';
-import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState } from '../flows/claim-steps';
+import { handleOnboardingStep, loadOnboardingState, saveOnboardingState, clearOnboardingState, handleOnboardingCallback, } from '../flows/onboarding-steps';
+import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState } from '../flows/claim-steps';
 // Map: projectId → cached Bot instance
 const botCache = new Map();
 /**
@@ -47,12 +48,24 @@ export async function createProjectBot(botToken, projectId) {
  * Wire up all handlers for a project-specific bot.
  */
 function wireProjectBotHandlers(bot, projectId) {
+    // /help command for project bots
+    bot.command('help', async (ctx) => {
+        await ctx.reply('*Zolara Project Bot*\n\n' +
+            'Use this bot to join your team\'s consensus rounds.\n\n' +
+            '1. Tap *Start* or send /start to join\n' +
+            '2. Complete onboarding\n' +
+            '3. Answer questions when a round is active\n' +
+            '4. React to synthesis reports in your group\n\n' +
+            'Questions? Ask your admin or type them here.', { parse_mode: 'Markdown' });
+    });
     // /start — member claim flow (deep link)
     // Use message:text with explicit check instead of bot.command() because:
     // - Telegram deep-link args don't always include bot_command entity
     // - bot.command() silently drops messages without entity, breaking claim flow
     bot.on('message:text', async (ctx) => {
-        const text = ctx.message.text;
+        const text = ctx.message?.text ?? '';
+        if (!text)
+            return;
         if (text.startsWith('/start')) {
             const args = text.replace(/^\/start\s*/, '').trim();
             if (args.startsWith('claim_')) {
@@ -61,9 +74,7 @@ function wireProjectBotHandlers(bot, projectId) {
                 return;
             }
             else {
-                await ctx.reply('👋 Welcome to Zolara!\n\n' +
-                    'This bot is used by your team to run alignment rounds.\n' +
-                    'Use the invite link from your admin to join your project.', { parse_mode: 'Markdown' });
+                await handlePlainStartForProject(ctx, projectId);
                 return;
             }
         }
@@ -82,13 +93,29 @@ function wireProjectBotHandlers(bot, projectId) {
             return;
         }
         // Question answering — check Redis for active question
-        const qStateRaw = await redis.get(`proj:${projectId}:q:${userId}`);
+        // Key must match what telegram-sender.ts uses (q:{userId})
+        const qStateRaw = await redis.get(`q:${userId}`);
         if (qStateRaw) {
             const { questionId, roundId } = JSON.parse(qStateRaw);
-            await redis.del(`proj:${projectId}:q:${userId}`);
+            await redis.del(`q:${userId}`);
             await saveResponseForProject(userId, projectId, roundId, questionId, text);
             await ctx.reply('✅ Received! Your perspective has been recorded.\n\n' +
                 'The synthesis will be posted to your group when the round closes.', { parse_mode: 'Markdown' });
+            return;
+        }
+        // AI conversational fallback — answer natural language questions about the project
+        if (text.trim().length >= 3) {
+            try {
+                const projectName = (await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1))[0]?.name ?? 'the project';
+                const systemPrompt = `You are a helpful assistant for the Zolara project bot. The project is called "${projectName}". Members use this bot to join rounds and submit their perspectives. Be brief and helpful.`;
+                const response = await llm.generate({ systemPrompt, userPrompt: text, temperature: 0.7, maxTokens: 400 });
+                if (response.text) {
+                    await ctx.reply(response.text.trim(), { parse_mode: 'Markdown' });
+                }
+            }
+            catch (err) {
+                console.error('[ProjectBot AI] error:', err);
+            }
         }
     });
     // Callback queries (inline button presses)
@@ -115,6 +142,20 @@ function wireProjectBotHandlers(bot, projectId) {
                 return;
             }
             await handleClaimCallbackForProject(ctx, state, data, projectId);
+            return;
+        }
+        // Problem validation callbacks (sent by project bot DMs)
+        if (data.startsWith('validate:')) {
+            const { parseValidationCallback, handleVoteCallback, handleTopicCallback } = await import('../../engine/phases/phase-2-problem-def/telegram-ui');
+            const parsed = parseValidationCallback(data);
+            if (!parsed) {
+                await ctx.answerCallbackQuery('');
+                return;
+            }
+            const result = parsed.action === 'vote'
+                ? await handleVoteCallback(parsed.problemDefinitionId, parsed.vote, userId)
+                : await handleTopicCallback(parsed.problemDefinitionId);
+            await ctx.answerCallbackQuery({ text: result.text, show_alert: result.alert });
             return;
         }
         // Report reaction callbacks
@@ -183,6 +224,57 @@ function wireProjectBotHandlers(bot, projectId) {
     });
 }
 // ── Per-project handler implementations ───────────────────────────────────────
+async function handlePlainStartForProject(ctx, projectId) {
+    const userId = ctx.from.id;
+    const [project] = await db
+        .select({ id: projects.id, name: projects.name, botUsername: projects.botUsername })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+    if (!project) {
+        await ctx.reply('❌ Project not found. Ask your admin for a fresh invite link.');
+        return;
+    }
+    const activeOnboarding = await loadOnboardingState(userId);
+    if (activeOnboarding && activeOnboarding.projectId === projectId) {
+        if (activeOnboarding.step === 'complete') {
+            await clearOnboardingState(userId);
+        }
+        else {
+            await handleOnboardingStep(ctx, activeOnboarding);
+            return;
+        }
+    }
+    const [member] = await db
+        .select({ role: members.role, onboardingStatus: members.onboardingStatus })
+        .from(members)
+        .innerJoin(users, eq(members.userId, users.id))
+        .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
+        .limit(1);
+    if (member && member.onboardingStatus !== 'complete') {
+        const onboardingState = {
+            phase: 'onboarding',
+            projectId,
+            telegramId: userId,
+            step: 'welcome',
+            createdAt: new Date().toISOString(),
+        };
+        await saveOnboardingState(onboardingState);
+        await handleOnboardingStep(ctx, onboardingState);
+        return;
+    }
+    if (member) {
+        await ctx.reply(`✅ You're connected to ${project.name}.\n\n` +
+            `Role: ${member.role ?? 'participant'}\n` +
+            `Onboarding: ${member.onboardingStatus ?? 'fresh'}\n\n` +
+            `When your admin starts a round, I'll DM you the questions here.`);
+        return;
+    }
+    const botUsername = project.botUsername ?? ctx.me?.username;
+    const inviteLink = botUsername ? `https://t.me/${botUsername}?start=claim_${projectId}` : null;
+    await ctx.reply(`👋 Welcome to ${project.name}.\n\n` +
+        `To join this project, use the project invite link${inviteLink ? `:\n${inviteLink}` : ' from your admin'}.`);
+}
 async function handleMemberClaimForProject(ctx, targetProjectId) {
     const userId = ctx.from.id;
     // Load project config for anonymity setting
@@ -193,6 +285,36 @@ async function handleMemberClaimForProject(ctx, targetProjectId) {
         .limit(1);
     if (!project) {
         await ctx.reply('❌ Project not found. This invite link may be expired.');
+        return;
+    }
+    const [existingMember] = await db
+        .select({ onboardingStatus: members.onboardingStatus, role: members.role })
+        .from(members)
+        .innerJoin(users, eq(members.userId, users.id))
+        .where(and(eq(users.telegramId, userId), eq(members.projectId, targetProjectId)))
+        .limit(1);
+    if (existingMember) {
+        if (existingMember.onboardingStatus === 'complete') {
+            await clearClaimState(userId);
+            await clearOnboardingState(userId);
+            await ctx.reply(`✅ You're already connected to ${project.name}.
+
+` +
+                `Role: ${existingMember.role ?? 'participant'}
+` +
+                `When a round starts, I'll message you here.`);
+            return;
+        }
+        const onboardingState = {
+            phase: 'onboarding',
+            projectId: targetProjectId,
+            telegramId: userId,
+            step: 'welcome',
+            createdAt: new Date().toISOString(),
+        };
+        await clearClaimState(userId);
+        await saveOnboardingState(onboardingState);
+        await handleOnboardingStep(ctx, onboardingState);
         return;
     }
     const projectConfig = project.config ?? {};
@@ -219,10 +341,10 @@ async function handleOnboardingCallbackForProject(ctx, state, data, projectId) {
         await handleOnboardingStep(ctx, state);
     }
     else {
-        const result = await handleOnboardingCallback(ctx, state, data);
-        if (result) {
-            await saveOnboardingState(result);
-        }
+        // handleOnboardingCallback persists intermediate state itself and clears
+        // state on completion. Do not re-save the returned completed state here,
+        // or post-onboarding messages get swallowed by a stale onboard:* key.
+        await handleOnboardingCallback(ctx, state, data);
     }
 }
 async function handleOnboardingTextForProject(ctx, state, text, projectId) {
@@ -251,7 +373,7 @@ async function handleReactionCallbackForProject(ctx, data, projectId) {
             .select({ id: members.id })
             .from(members)
             .innerJoin(users, eq(members.userId, users.id))
-            .where(eq(users.telegramId, userId))
+            .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
             .limit(1);
         if (member) {
             await db.insert(engagementEvents).values({
@@ -277,7 +399,7 @@ async function saveResponseForProject(userId, projectId, roundId, questionId, te
             .select({ id: members.id })
             .from(members)
             .innerJoin(users, eq(members.userId, users.id))
-            .where(eq(users.telegramId, userId))
+            .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
             .limit(1);
         if (!member) {
             console.warn(`[saveResponse] Member not found for user ${userId}`);

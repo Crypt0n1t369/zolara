@@ -2,12 +2,13 @@
  * Project creation service.
  * Handles the business logic of creating a new managed bot project.
  */
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../../data/db';
-import { projects, admins } from '../../data/schema/projects';
+import { projects, admins, adminRoles, users, members } from '../../data/schema/projects';
 import { encrypt, hashToken, generateSecret } from '../../util/crypto';
-import { getManagedBotToken, setManagedBotWebhook, generateBotUsername, buildCreationLink, } from './lifecycle';
+import { getManagedBotToken, setManagedBotWebhook, getManagedBotInfo, setBotCommands, generateBotUsername, buildCreationLink, } from './lifecycle';
 import { config } from '../../config';
+import { spawnProjectAgent } from '../agent/project-agent';
 import { redis } from '../../data/redis';
 // The Zolara bot's Telegram username (for creation links via BotFather)
 const MANAGER_BOT_USERNAME = 'Zolara_bot';
@@ -116,13 +117,28 @@ export async function finalizeProjectBot(adminTelegramId, botUserId, suggestedUs
     const webhookSecret = generateSecret();
     // Build webhook URL — server uses /webhook/projectbot/:tokenHash
     const webhookUrl = `${config.WEBHOOK_BASE_URL}/webhook/projectbot/${tokenHash}`;
-    // Set webhook for the new bot
-    await setManagedBotWebhook(botToken, webhookUrl, webhookSecret);
+    // Set webhook for the new bot and fail loudly if Telegram rejects it.
+    const webhookResult = await setManagedBotWebhook(botToken, webhookUrl, webhookSecret);
+    if (!webhookResult.success) {
+        throw new Error(`setWebhook failed: ${webhookResult.description ?? 'Unknown error'}`);
+    }
+    // Set bot commands (shows in Telegram's command menu)
+    await setBotCommands(botToken);
+    // Prefer the actual Telegram username from the event/API over our suggestion.
+    let actualUsername = suggestedUsername ?? null;
+    try {
+        const botInfo = await getManagedBotInfo(botUserId);
+        actualUsername = botInfo.username ?? actualUsername;
+    }
+    catch (err) {
+        console.warn('[ManagedBot] Could not fetch bot username, using event/suggestion fallback:', err);
+    }
     // Update project with bot info
     const updated = await db
         .update(projects)
         .set({
         botTelegramId: botUserId,
+        botUsername: actualUsername,
         botTokenHash: tokenHash,
         botTokenEncrypted: encryptedToken,
         webhookSecret,
@@ -134,10 +150,51 @@ export async function finalizeProjectBot(adminTelegramId, botUserId, suggestedUs
     if (!updated[0]) {
         throw new Error('Failed to update project with bot info');
     }
-    // Bot username comes from the managed_bot_created event, not from API
-    // We can't call getManagedBotInfo reliably, so we accept it as param
+    // Register the creator as an owner/member of their new project so /start,
+    // /members and the first collaboration round have a clear connected admin.
+    const [adminUser] = await db.insert(users)
+        .values({ telegramId: adminTelegramId })
+        .onConflictDoUpdate({
+        target: users.telegramId,
+        set: { updatedAt: new Date() },
+    })
+        .returning();
+    const [existingMember] = await db
+        .select({ id: members.id })
+        .from(members)
+        .where(and(eq(members.projectId, project.id), eq(members.userId, adminUser.id)))
+        .limit(1);
+    if (!existingMember) {
+        await db.insert(members).values({
+            projectId: project.id,
+            userId: adminUser.id,
+            role: 'admin',
+            onboardingStatus: 'complete',
+            commitmentLevel: 'active',
+            lastActive: new Date(),
+        });
+    }
+    const [existingAdminRole] = await db
+        .select({ id: adminRoles.id })
+        .from(adminRoles)
+        .where(and(eq(adminRoles.projectId, project.id), eq(adminRoles.adminId, admin.id)))
+        .limit(1);
+    if (existingAdminRole) {
+        await db.update(adminRoles)
+            .set({ role: 'owner' })
+            .where(eq(adminRoles.id, existingAdminRole.id));
+    }
+    else {
+        await db.insert(adminRoles).values({ projectId: project.id, adminId: admin.id, role: 'owner' });
+    }
+    // Clear creation/initiation Redis state so the admin is not kept in bot creation flow.
+    await redis.del(`init:${adminTelegramId}`);
+    await redis.del(`pending:${adminTelegramId}`);
+    await redis.del(`pending_admin:${adminTelegramId}`);
+    // Spawn team coordinator agent for this project (non-blocking)
+    spawnProjectAgent(project.id).catch((err) => console.error('[Agent] Failed to spawn agent:', err));
     return {
         projectId: project.id,
-        botUsername: suggestedUsername ?? 'unknown',
+        botUsername: actualUsername ?? 'unknown',
     };
 }

@@ -11,19 +11,19 @@ import {
 describe('Managed Bots lifecycle', () => {
   describe('generateBotUsername', () => {
     it('should lowercase and slugify project name', () => {
-      expect(generateBotUsername('JCI Vision 2030')).toBe('jci_vision_2030_bot');
+      expect(generateBotUsername('JCI Vision 2030')).toBe('jci_vision_2030_zol_bot');
     });
 
     it('should remove special characters', () => {
-      expect(generateBotUsername('Team Alpha!')).toBe('team_alpha_bot');
+      expect(generateBotUsername('Team Alpha!')).toBe('team_alpha_zol_bot');
     });
 
     it('should collapse multiple spaces/separators', () => {
-      expect(generateBotUsername('Hello---World   Test')).toBe('hello_world_test_bot');
+      expect(generateBotUsername('Hello---World   Test')).toBe('hello_world_test_zol_bot');
     });
 
     it('should trim leading/trailing underscores', () => {
-      expect(generateBotUsername('  Test Project  ')).toBe('test_project_bot');
+      expect(generateBotUsername('  Test Project  ')).toBe('test_project_zol_bot');
     });
 
     it('should truncate to 30 chars before suffix if needed', () => {

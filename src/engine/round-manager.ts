@@ -8,7 +8,7 @@
 
 import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../data/db';
-import { rounds, projects, members, questions, responses } from '../data/schema/projects';
+import { rounds, projects, members, questions, responses, users } from '../data/schema/projects';
 import { runSynthesis, getMinimumResponses, meetsMinimumThreshold } from './synthesis/pipeline';
 import { generateQuestions, personalizeQuestion } from './question/generator';
 import { llm } from './llm/minimax';
@@ -120,7 +120,7 @@ export async function triggerRound(
     .returning();
 
   // Transition to gathering (generate and send questions)
-  await transitionToGathering(round.id, projectId, nextRoundNumber, memberList, config, options?.anonymity ?? null);
+  await transitionToGathering(round.id, projectId, nextRoundNumber, topic, memberList, config, options?.anonymity ?? null);
 
   return { roundId: round.id, status: round.status ?? 'unknown' };
 }
@@ -153,6 +153,7 @@ async function transitionToGathering(
   roundId: string,
   projectId: string,
   roundNumber: number,
+  topic: string,
   memberList: Array<{
     id: number;
     userId: number | null;
@@ -176,7 +177,7 @@ async function transitionToGathering(
   try {
     questionsList = await generateQuestions({
       projectId,
-      topic: '', // Will be set by admin
+      topic,
       depth: (projectConfig.questionDepth as 'shallow' | 'medium' | 'deep') ?? 'medium',
       anonymity: roundAnonymity ?? (projectConfig.anonymity as 'full' | 'optional' | 'attributed') ?? 'optional',
       teamSizeRange: projectConfig.team_size_range ?? '2-5',
@@ -229,6 +230,48 @@ async function transitionToGathering(
     .update(rounds)
     .set({ status: 'gathering', startedAt: new Date() })
     .where(eq(rounds.id, roundId));
+}
+
+/**
+ * Start a round that was created in `scheduled` status by the problem validation gate.
+ * Generates and sends the first question to members, same as the normal trigger flow.
+ */
+export async function startScheduledRound(roundId: string, projectId: string): Promise<void> {
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!project) throw new Error('Project not found');
+
+  const [round] = await db
+    .select()
+    .from(rounds)
+    .where(eq(rounds.id, roundId))
+    .limit(1);
+
+  if (!round) throw new Error('Round not found');
+
+  if (round.status !== 'scheduled') {
+    return;
+  }
+
+  const memberList = await db
+    .select()
+    .from(members)
+    .where(eq(members.projectId, projectId))
+    .limit(100);
+
+  await transitionToGathering(
+    round.id,
+    projectId,
+    round.roundNumber,
+    round.topic ?? 'General discussion',
+    memberList,
+    project.config as unknown as Record<string, unknown>,
+    round.anonymity as 'full' | 'optional' | 'attributed' | null
+  );
 }
 
 async function transitionToSynthesizing(roundId: string): Promise<void> {
@@ -442,7 +485,19 @@ async function sendQuestionToMember(
   questionId: string,
   roundId: string
 ): Promise<number | null> {
-  return sendQuestionDM(projectId, userId, questionText, roundNumber, questionId, roundId);
+  // members.userId is the internal DB users.id; Telegram DMs need users.telegramId.
+  const [user] = await db
+    .select({ telegramId: users.telegramId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!user?.telegramId) {
+    telegramLog.sendFailed('Cannot send question: member has no Telegram ID', { projectId, userId });
+    return null;
+  }
+
+  return sendQuestionDM(projectId, user.telegramId, questionText, roundNumber, questionId, roundId);
 }
 
 async function postReportToGroup(

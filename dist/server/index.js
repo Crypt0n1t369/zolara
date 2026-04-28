@@ -13,12 +13,14 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { logger as honoLogger } from 'hono/logger';
+import { createHash } from 'crypto';
 import { config } from '../config';
 import { webhook as webhookLog } from '../util/logger';
 import { db } from '../data/db';
 import { projects } from '../data/schema/projects';
 import { eq } from 'drizzle-orm';
 import { decrypt } from '../util/crypto';
+import { setManagedBotWebhook } from '../project/managed-bots/lifecycle';
 // ── Self-Healing Agent Setup ───────────────────────────────────────────────────
 try {
     const { createSelfHealingAgent, JSONKnowledgeBase } = await import('self-healing-agent');
@@ -123,9 +125,42 @@ app.post('/webhook/zolara', async (c) => {
     return c.json({ ok: true });
 });
 const port = config.PORT;
+/** Re-register webhooks for all active project bots on startup (self-heal after tunnel URL change) */
+async function reRegisterWebhooks() {
+    const BASE = config.WEBHOOK_BASE_URL;
+    if (!BASE || !BASE.startsWith('http')) {
+        console.log('[Webhook] No WEBHOOK_BASE_URL configured — skipping auto-rehack');
+        return;
+    }
+    const rows = await db.select({
+        id: projects.id,
+        name: projects.name,
+        botUsername: projects.botUsername,
+        botTokenEncrypted: projects.botTokenEncrypted,
+        webhookSecret: projects.webhookSecret,
+    }).from(projects).where(eq(projects.status, 'active'));
+    let ok = 0;
+    for (const row of rows) {
+        if (!row.botTokenEncrypted || !row.webhookSecret)
+            continue;
+        try {
+            const token = decrypt(row.botTokenEncrypted);
+            const hash = createHash('sha256').update(token).digest('hex');
+            const url = `${BASE}/webhook/projectbot/${hash}`;
+            await setManagedBotWebhook(token, url, row.webhookSecret);
+            console.log(`[Webhook] ✅ @${row.botUsername} rehacked → ${url}`);
+            ok++;
+        }
+        catch (e) {
+            console.error(`[Webhook] ❌ ${row.name}: ${e.message}`);
+        }
+    }
+    console.log(`[Webhook] Auto-rehack complete: ${ok}/${rows.length} bots registered`);
+}
 serve({ fetch: app.fetch, port }, () => {
     console.log(`✅ Zolara HTTP server on http://0.0.0.0:${port}`);
     console.log('[Zolara] Multi-bot webhook router active on /webhook/projectbot/:tokenHash');
+    reRegisterWebhooks().catch((err) => console.error('[Webhook] Auto-rehack failed:', err));
 });
 // Start grammY long polling for @Zolara_bot (control plane bot)
 // Managed project bots use webhooks only (polling would require one process per bot)

@@ -95,12 +95,7 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
         await handleMemberClaimForProject(ctx, targetProjectId);
         return;
       } else {
-        await ctx.reply(
-          '👋 Welcome to Zolara!\n\n' +
-          'This bot is used by your team to run alignment rounds.\n' +
-          'Use the invite link from your admin to join your project.',
-          { parse_mode: 'Markdown' }
-        );
+        await handlePlainStartForProject(ctx, projectId);
         return;
       }
     }
@@ -182,6 +177,22 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
       return;
     }
 
+    // Problem validation callbacks (sent by project bot DMs)
+    if (data.startsWith('validate:')) {
+      const { parseValidationCallback, handleVoteCallback, handleTopicCallback } =
+        await import('../../engine/phases/phase-2-problem-def/telegram-ui');
+      const parsed = parseValidationCallback(data);
+      if (!parsed) {
+        await ctx.answerCallbackQuery('');
+        return;
+      }
+      const result = parsed.action === 'vote'
+        ? await handleVoteCallback(parsed.problemDefinitionId, parsed.vote!, userId)
+        : await handleTopicCallback(parsed.problemDefinitionId);
+      await ctx.answerCallbackQuery({ text: result.text, show_alert: result.alert });
+      return;
+    }
+
     // Report reaction callbacks
     if (data.startsWith('reaction:')) {
       await handleReactionCallbackForProject(ctx, data, projectId);
@@ -259,6 +270,69 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
 
 // ── Per-project handler implementations ───────────────────────────────────────
 
+async function handlePlainStartForProject(ctx: any, projectId: string): Promise<void> {
+  const userId = ctx.from!.id;
+
+  const [project] = await db
+    .select({ id: projects.id, name: projects.name, botUsername: projects.botUsername })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!project) {
+    await ctx.reply('❌ Project not found. Ask your admin for a fresh invite link.');
+    return;
+  }
+
+  const activeOnboarding = await loadOnboardingState(userId);
+  if (activeOnboarding && activeOnboarding.projectId === projectId) {
+    if (activeOnboarding.step === 'complete') {
+      await clearOnboardingState(userId);
+    } else {
+      await handleOnboardingStep(ctx, activeOnboarding);
+      return;
+    }
+  }
+
+  const [member] = await db
+    .select({ role: members.role, onboardingStatus: members.onboardingStatus })
+    .from(members)
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
+    .limit(1);
+
+  if (member && member.onboardingStatus !== 'complete') {
+    const onboardingState: OnboardingState = {
+      phase: 'onboarding',
+      projectId,
+      telegramId: userId,
+      step: 'welcome',
+      createdAt: new Date().toISOString(),
+    };
+    await saveOnboardingState(onboardingState);
+    await handleOnboardingStep(ctx, onboardingState);
+    return;
+  }
+
+  if (member) {
+    await ctx.reply(
+      `✅ You're connected to ${project.name}.\n\n` +
+      `Role: ${member.role ?? 'participant'}\n` +
+      `Onboarding: ${member.onboardingStatus ?? 'fresh'}\n\n` +
+      `When your admin starts a round, I'll DM you the questions here.`
+    );
+    return;
+  }
+
+  const botUsername = project.botUsername ?? ctx.me?.username;
+  const inviteLink = botUsername ? `https://t.me/${botUsername}?start=claim_${projectId}` : null;
+
+  await ctx.reply(
+    `👋 Welcome to ${project.name}.\n\n` +
+    `To join this project, use the project invite link${inviteLink ? `:\n${inviteLink}` : ' from your admin'}.`
+  );
+}
+
 async function handleMemberClaimForProject(ctx: any, targetProjectId: string): Promise<void> {
   const userId = ctx.from!.id;
 
@@ -271,6 +345,41 @@ async function handleMemberClaimForProject(ctx: any, targetProjectId: string): P
 
   if (!project) {
     await ctx.reply('❌ Project not found. This invite link may be expired.');
+    return;
+  }
+
+  const [existingMember] = await db
+    .select({ onboardingStatus: members.onboardingStatus, role: members.role })
+    .from(members)
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(and(eq(users.telegramId, userId), eq(members.projectId, targetProjectId)))
+    .limit(1);
+
+  if (existingMember) {
+    if (existingMember.onboardingStatus === 'complete') {
+      await clearClaimState(userId);
+      await clearOnboardingState(userId);
+      await ctx.reply(
+        `✅ You're already connected to ${project.name}.
+
+` +
+        `Role: ${existingMember.role ?? 'participant'}
+` +
+        `When a round starts, I'll message you here.`
+      );
+      return;
+    }
+
+    const onboardingState: OnboardingState = {
+      phase: 'onboarding',
+      projectId: targetProjectId,
+      telegramId: userId,
+      step: 'welcome',
+      createdAt: new Date().toISOString(),
+    };
+    await clearClaimState(userId);
+    await saveOnboardingState(onboardingState);
+    await handleOnboardingStep(ctx, onboardingState);
     return;
   }
 
@@ -306,10 +415,10 @@ async function handleOnboardingCallbackForProject(
     const { handleOnboardingStep } = await import('../flows/onboarding-steps');
     await handleOnboardingStep(ctx, state);
   } else {
-    const result = await handleOnboardingCallback(ctx, state, data);
-    if (result) {
-      await saveOnboardingState(result);
-    }
+    // handleOnboardingCallback persists intermediate state itself and clears
+    // state on completion. Do not re-save the returned completed state here,
+    // or post-onboarding messages get swallowed by a stale onboard:* key.
+    await handleOnboardingCallback(ctx, state, data);
   }
 }
 
@@ -363,7 +472,7 @@ async function handleReactionCallbackForProject(
       .select({ id: members.id })
       .from(members)
       .innerJoin(users, eq(members.userId, users.id))
-      .where(eq(users.telegramId, userId))
+      .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
       .limit(1);
 
     if (member) {
@@ -396,7 +505,7 @@ async function saveResponseForProject(
       .select({ id: members.id })
       .from(members)
       .innerJoin(users, eq(members.userId, users.id))
-      .where(eq(users.telegramId, userId))
+      .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId)))
       .limit(1);
 
     if (!member) {

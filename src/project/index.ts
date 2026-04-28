@@ -23,7 +23,7 @@ import { config } from '../config';
 import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
-import { projects, admins, members, rounds } from '../data/schema/projects';
+import { projects, admins, members, rounds, users } from '../data/schema/projects';
 import { eq, desc, and, ne } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
@@ -92,6 +92,48 @@ async function clearInitState(telegramId: number): Promise<void> {
 // ── Commands: Admin ───────────────────────────────────────────────────────────
 
 zolaraBot.command('start', async (ctx) => {
+  const args = (ctx.match as string) || '';
+  const userId = ctx.from!.id;
+
+  // Pattern: /start claim_xxx → member commitment gate
+  if (args.startsWith('claim_')) {
+    const projectId = args.replace('claim_', '').trim();
+    if (projectId) { await handleMemberClaim(ctx, userId, projectId); return; }
+  }
+
+  // Pattern: /start join_xxx → legacy, redirect to claim
+  if (args.startsWith('join_')) {
+    const projectId = args.replace('join_', '').trim();
+    if (projectId) { await handleMemberClaim(ctx, userId, projectId); return; }
+  }
+
+  // Pattern: /start createbot_xxx → user confirmed bot creation via BotFather
+  if (args.startsWith('createbot_')) {
+    const projectId = args.replace('createbot_', '').trim();
+    if (projectId) {
+      const [proj] = await db.select({
+        botTelegramId: projects.botTelegramId,
+        name: projects.name,
+        botUsername: projects.botUsername,
+      }).from(projects).where(eq(projects.id, projectId)).limit(1);
+
+      if (proj?.botTelegramId) {
+        const username = proj.botUsername ? `@${proj.botUsername}` : 'your project bot';
+        await ctx.reply(
+          `✅ Bot already created for *${proj.name}*!\n\n` +
+          `Meet ${username} — your project's assistant is ready.`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        await ctx.reply(
+          `🔧 To create your project bot, click the link in the /create flow message.\n\n` +
+          `Once your bot is created, come back here and we'll complete the setup!`
+        );
+      }
+      return;
+    }
+  }
+
   await ctx.reply(
     '🌀 *Zolara* — AI Consensus Engine\n\n' +
     'I help teams find alignment through structured perspective gathering.\n\n' +
@@ -305,7 +347,16 @@ zolaraBot.command('startround', async (ctx) => {
     return;
   }
 
-  const topic = (ctx.match as string).trim() || 'General check-in';
+  const topic = (ctx.match as string).trim();
+  if (!topic || topic.length < 12) {
+    await ctx.reply(
+      'Please start the round with a clear objective.\n\n' +
+      'Example:\n' +
+      '/startround Align on the first onboarding experience for new Zolara teams\n\n' +
+      'The topic should describe what the team is trying to decide, understand, or improve.'
+    );
+    return;
+  }
 
   try {
     // Use Phase 2 validation flow if flag is active, otherwise fall back to baseline
@@ -605,14 +656,14 @@ zolaraBot.on('callback_query:data', async (ctx) => {
       const { engagementEvents } = await import('../data/schema/projects');
       const { db } = await import('../data/db');
       const { users, members } = await import('../data/schema/projects');
-      const { eq } = await import('drizzle-orm');
+      const { eq, and } = await import('drizzle-orm');
 
-      // Find member by telegram ID
+      // Find member by telegram ID scoped to this project
       const [memberRow] = await db
         .select({ memberId: members.id })
         .from(members)
         .innerJoin(users, eq(members.userId, users.id))
-        .where(eq(users.telegramId, userId))
+        .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId as any)))
         .limit(1);
 
       if (memberRow) {
@@ -805,63 +856,6 @@ async function handleAdminGroupCallback(ctx: any, data: string, adminTelegramId:
   }
 }
 
-// ── Member: /start with claim_ routing ───────────────────────────────────────
-
-zolaraBot.command('start', async (ctx) => {
-  const args = (ctx.match as string) || '';
-  const userId = ctx.from!.id;
-
-  // Pattern: /start claim_xxx → member commitment gate
-  if (args.startsWith('claim_')) {
-    const projectId = args.replace('claim_', '').trim();
-    if (projectId) { await handleMemberClaim(ctx, userId, projectId); return; }
-  }
-
-  // Pattern: /start join_xxx → legacy, redirect to claim
-  if (args.startsWith('join_')) {
-    const projectId = args.replace('join_', '').trim();
-    if (projectId) { await handleMemberClaim(ctx, userId, projectId); return; }
-  }
-
-  // Pattern: /start createbot_xxx → user confirmed bot creation via BotFather
-  // This is sent after the user clicks the creation link in the creation flow
-  if (args.startsWith('createbot_')) {
-    const projectId = args.replace('createbot_', '').trim();
-    if (projectId) {
-      // Look up project and check if bot is already finalized
-      const [proj] = await db.select({
-        botTelegramId: projects.botTelegramId,
-        name: projects.name,
-      }).from(projects).where(eq(projects.id, projectId)).limit(1);
-      if (proj?.botTelegramId) {
-        // Bot already created and finalized
-        await ctx.reply(
-          `✅ Bot already created for *${proj.name}*!\n\n` +
-          `Meet @Zolara_bot — your project's assistant is ready.`,
-          { parse_mode: 'Markdown' }
-        );
-      } else {
-        // Bot not yet created — guide user
-        await ctx.reply(
-          `🔧 To create your project bot, click the link in the /create flow message.\n\n` +
-          `Once your bot is created, come back here and we'll complete the setup!`
-        );
-      }
-      return;
-    }
-  }
-
-  // Regular /start
-  await ctx.reply(
-    '🏠 *Welcome to Zolara*\n\n' +
-    'Your team\'s AI consensus engine.\n\n' +
-    '/help — Learn more\n' +
-    '/status — Current round status\n' +
-    '/profile — Your member profile',
-    { parse_mode: 'Markdown' }
-  );
-});
-
 // ── Managed Bot Creation & Group Auto-Detection ────────────────────────────────
 // Two distinct events come through my_chat_member:
 // 1. managed_bot_created: new bot was created via creation link (chat=private, new_member=bot)
@@ -904,6 +898,7 @@ zolaraBot.on('my_chat_member', async (ctx) => {
         `2️⃣ I'll automatically detect the group and set it as the report destination\n` +
         `3️⃣ Share this invite link with your team members:\n` +
         `👉 https://t.me/${botUsername}?start=claim_${projectId}\n\n` +
+        `⏳ Your team coordinator is being set up now — this takes up to 60 seconds.\n` +
         `Run /startround when your team is ready for the first round!`,
         { parse_mode: 'Markdown' }
       );
@@ -1101,7 +1096,8 @@ async function handleMemberClaim(ctx: any, userId: number, projectId: string): P
   const [existing] = await db
     .select({ onboardingStatus: members.onboardingStatus })
     .from(members)
-    .where(and(eq(members.projectId, projectId as any), eq(members.userId, userId as any)))
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(and(eq(members.projectId, projectId as any), eq(users.telegramId, userId)))
     .limit(1);
 
   if (existing && existing.onboardingStatus === 'committed') {
@@ -1162,7 +1158,7 @@ async function saveResponse(userId: number, projectId: string, roundId: string, 
       .select({ memberId: members.id })
       .from(members)
       .innerJoin(users, eq(members.userId, users.id))
-      .where(eq(users.telegramId, userId))
+      .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId as any)))
       .limit(1);
 
     if (!memberRow) {

@@ -101,22 +101,39 @@ export async function spawnProjectAgent(projectId: string): Promise<{ success: b
   if (existing[0]?.status === 'active') {
     return { success: false, error: 'Agent already active for this project' };
   }
+  if (existing[0]?.status === 'pending' && existing[0].sessionKey?.startsWith('pending:')) {
+    return { success: true, sessionKey: existing[0].sessionKey };
+  }
 
   const ctx = await getProjectContext(projectId);
   if (!ctx) return { success: false, error: 'Project not found' };
 
-  // Use the OpenClaw spawner agent via CLI
+  // Write spawn request to queue (non-blocking)
+  // PM2 cron process will pick it up within 60s
   const { spawnTeamCoordinator } = await import('../../util/spawn-agent');
   const result = await spawnTeamCoordinator(projectId, ctx.projectName, ctx.memberCount, ctx.activeRound);
 
-  await db.insert(projectAgents).values({
-    projectId,
-    sessionKey: result.sessionKey ?? `error:${result.error}`,
+  // Store with pending session key — the spawner reconciles this row to active
+  // after sessions_spawn returns a real session key.
+  const pendingRow = {
+    sessionKey: result.sessionKey ?? `pending:${projectId}`,
     agentType: 'team_coordinator',
     displayName: `${ctx.projectName} Coordinator`,
     config: JSON.stringify({ ...ctx, spawnResult: result }),
-    status: result.success ? 'active' : 'active', // Still active — we track error in sessionKey
-  });
+    status: 'pending',
+    updatedAt: new Date(),
+  };
+
+  if (existing[0]) {
+    await db.update(projectAgents)
+      .set(pendingRow)
+      .where(eq(projectAgents.projectId, projectId));
+  } else {
+    await db.insert(projectAgents).values({
+      projectId,
+      ...pendingRow,
+    });
+  }
 
   if (result.success) {
     console.log(`[Agent] Spawned team coordinator for project ${projectId}, session=${result.sessionKey}`);
