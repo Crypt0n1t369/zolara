@@ -422,3 +422,23 @@ Verified:
 ### Next Actions
 - Exercise `/dashboard` in Telegram against a live project with pending onboarding + validation voting data.
 - Continue Round 4 admin UX polish if more status gaps appear in live use.
+
+## 2026-04-28 23:36 EEST — Night Shift Dashboard Verification
+
+### Verified
+- `npm run build` passes.
+- `npx vitest run src/project/dashboard.test.ts src/engine/phase-2-problem-def.test.ts` passes: 25/25.
+- `npm test` passes: 10 files / 104 tests.
+- `GET http://localhost:3000/health` returns OK.
+- PM2 services are online: `cloudflared`, `zolara`, `zolara-spawner`.
+
+### Current State
+- Dashboard source and helper tests are already committed and pushed in `0bad22d`.
+- No dashboard code failures found during this block; no PM2 restart needed because runtime health is OK and no code changed.
+- Local `.env` remains modified by tunnel URL management and was intentionally not committed.
+
+### Next Highest-Friction User Flow
+- After `/dashboard`, the biggest user friction is the `needs_work` validation path: the system tells the admin/team to rewrite and re-run `/startround <clearer topic>`, but does not preserve the failed validation context or offer a one-tap/admin-guided refinement loop.
+
+### Concrete Next Action
+- Build an admin refinement flow for `needs_work`: store the clarification questions + suggested refined topic, add dashboard/start-round action copy that exposes the latest failed validation, and let the admin confirm or edit the suggested refined topic before automatically creating the replacement validation/round.
