@@ -312,3 +312,21 @@ Verified:
 - `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
 - Restarted PM2 `zolara`; `/health` returns OK.
 - PM2 process list saved.
+
+## 2026-04-28 — Onboarding Back/Skip/Review UX
+
+### Built / Fixed
+- Added Back and Skip controls to onboarding prompts so users can recover if they answered late, got interrupted, or want to change course.
+- Added a final onboarding review screen before completion:
+  - Shows saved role, interests/knowledge, availability, and communication style.
+  - Lets the member confirm or jump back to edit a specific field.
+- Changed onboarding finalization so data is written to the member profile only after the user confirms the review screen.
+- Saved availability into `projectProfile` so the answer is not lost.
+- Text replies during button-only steps now explain to use buttons instead of silently falling through.
+
+### Verified
+- `npm run build` passes.
+- `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
+- Restarted PM2 services after PM2 lost its process list; `cloudflared`, `zolara`, and `zolara-spawner` are online.
+- `/health` returns OK.
+- Project bot webhooks re-registered on the current Cloudflare tunnel.

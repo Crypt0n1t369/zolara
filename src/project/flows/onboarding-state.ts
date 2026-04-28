@@ -17,10 +17,11 @@ export type OnboardingStep =
   | 'interests'
   | 'availability'
   | 'communication_style'
+  | 'review'
   | 'complete';
 
 export const ONBOARDING_STEP_ORDER: OnboardingStep[] = [
-  'welcome', 'role', 'interests', 'availability', 'communication_style', 'complete',
+  'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
 ];
 
 export interface ClaimState {

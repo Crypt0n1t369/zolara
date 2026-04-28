@@ -4,7 +4,7 @@
 //   Phase 2 — Full onboarding: happens before first round starts
 export const CLAIM_STEPS = ['claim_welcome'];
 export const ONBOARDING_STEP_ORDER = [
-    'welcome', 'role', 'interests', 'availability', 'communication_style', 'complete',
+    'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
 ];
 export function nextOnboardingStep(current) {
     const idx = ONBOARDING_STEP_ORDER.indexOf(current);
