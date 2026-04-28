@@ -442,3 +442,28 @@ Verified:
 
 ### Concrete Next Action
 - Build an admin refinement flow for `needs_work`: store the clarification questions + suggested refined topic, add dashboard/start-round action copy that exposes the latest failed validation, and let the admin confirm or edit the suggested refined topic before automatically creating the replacement validation/round.
+
+## 2026-04-29 — Onboarding Restart + Context Labels
+
+### Built / Fixed
+- Added `/restart_onboarding` for project bots and the control bot.
+  - Clears any in-progress onboarding Redis state for the member/project.
+  - Clears stale claim state before restarting.
+  - Restarts safely only when the user has a known membership; otherwise asks them to use the invite link.
+  - Control bot handles active onboarding, single-project membership, and asks multi-project users to restart inside the specific project bot.
+- Added explicit `Currently answering: X` labels to every onboarding prompt: welcome, role, interests, availability, communication style, and review.
+- Added onboarding step label helpers and tests.
+- Added `/restart_onboarding` and `/my_status` to managed bot command menus.
+
+### Verified
+- `npm run build` passes.
+- `npm test` passes: 10 files / 105 tests.
+- Restarted PM2 `zolara`.
+- Health check OK: `http://127.0.0.1:3000/health`.
+
+### Current State
+- Onboarding prompts now make the active answer context explicit.
+- Members can safely redo onboarding without manually cancelling or asking an admin.
+
+### Next
+- Live Telegram smoke test of `/restart_onboarding` on a project bot with a real member account.

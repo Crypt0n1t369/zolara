@@ -19,7 +19,7 @@ import { projects, members, users, rounds, responses } from '../../data/schema/p
 import { eq, and, desc } from 'drizzle-orm';
 import { redis } from '../../data/redis';
 import { nextOnboardingStep, } from '../flows/onboarding-state';
-import { handleOnboardingStep, loadOnboardingState, saveOnboardingState, clearOnboardingState, handleOnboardingCallback, } from '../flows/onboarding-steps';
+import { handleOnboardingStep, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, handleOnboardingCallback, } from '../flows/onboarding-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState } from '../flows/claim-steps';
 // Map: projectId → cached Bot instance
 const botCache = new Map();
@@ -57,6 +57,18 @@ function wireProjectBotHandlers(bot, projectId) {
             '3. Answer questions when a round is active\n' +
             '4. React to synthesis reports in your group\n\n' +
             'Questions? Ask your admin or type them here.', { parse_mode: 'Markdown' });
+    });
+    // /restart_onboarding — safe reset for members who want to redo their profile
+    bot.command('restart_onboarding', async (ctx) => {
+        const userId = ctx.from.id;
+        const state = await restartOnboardingState(userId, projectId);
+        await clearClaimState(userId);
+        if (!state) {
+            await ctx.reply('I could not find your membership for this project yet. Please use your project invite link first.');
+            return;
+        }
+        await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+        await handleOnboardingStep(ctx, state);
     });
     // /my_status — concise personal state for members
     bot.command('my_status', async (ctx) => {

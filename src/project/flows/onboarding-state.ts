@@ -24,6 +24,24 @@ export const ONBOARDING_STEP_ORDER: OnboardingStep[] = [
   'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
 ];
 
+const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
+  welcome: 'Welcome',
+  role: 'Role / connection',
+  interests: 'Interests / knowledge',
+  availability: 'Weekly availability',
+  communication_style: 'Communication style',
+  review: 'Review your answers',
+  complete: 'Complete',
+};
+
+export function onboardingStepLabel(step: OnboardingStep): string {
+  return ONBOARDING_STEP_LABELS[step];
+}
+
+export function currentlyAnsweringLabel(step: OnboardingStep): string {
+  return `Currently answering: ${onboardingStepLabel(step)}`;
+}
+
 export interface ClaimState {
   phase: 'claim';
   projectId: string;

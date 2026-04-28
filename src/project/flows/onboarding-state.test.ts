@@ -8,6 +8,8 @@ import {
   prevOnboardingStep,
   ONBOARDING_STEP_ORDER,
   type OnboardingStep,
+  onboardingStepLabel,
+  currentlyAnsweringLabel,
 } from './onboarding-state';
 
 describe('Onboarding state machine', () => {
@@ -16,6 +18,15 @@ describe('Onboarding state machine', () => {
       expect(ONBOARDING_STEP_ORDER).toEqual([
         'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
       ]);
+    });
+  });
+
+
+  describe('prompt labels', () => {
+    it('renders explicit Currently answering labels for prompts', () => {
+      expect(onboardingStepLabel('role')).toBe('Role / connection');
+      expect(currentlyAnsweringLabel('role')).toBe('Currently answering: Role / connection');
+      expect(currentlyAnsweringLabel('communication_style')).toBe('Currently answering: Communication style');
     });
   });
 

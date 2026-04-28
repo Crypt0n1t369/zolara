@@ -128,6 +128,8 @@ export async function setBotCommands(botToken) {
     const commands = [
         { command: 'start', description: 'Join your team on Zolara' },
         { command: 'help', description: 'Get help with using this bot' },
+        { command: 'restart_onboarding', description: 'Restart your onboarding profile' },
+        { command: 'my_status', description: 'See your member status' },
     ];
     const response = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
         method: 'POST',

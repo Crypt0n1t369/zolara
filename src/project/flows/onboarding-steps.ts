@@ -5,7 +5,7 @@
 
 import type { OnboardingState, OnboardingStep } from './onboarding-state';
 import type { Context } from 'grammy';
-import { nextOnboardingStep, prevOnboardingStep } from './onboarding-state';
+import { currentlyAnsweringLabel, nextOnboardingStep, prevOnboardingStep } from './onboarding-state';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
@@ -39,6 +39,10 @@ function styleLabel(value?: string): string {
   } as Record<string, string>)[value ?? ''] ?? 'Not answered';
 }
 
+function promptPrefix(step: OnboardingStep): string {
+  return `${currentlyAnsweringLabel(step)}\n\n`;
+}
+
 // ── Step Renderers ────────────────────────────────────────────────────────────
 
 async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> {
@@ -54,6 +58,7 @@ async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> 
   const projectName = project?.name ?? 'the project';
 
   await ctx.reply(
+    promptPrefix('welcome') +
     `👋 Welcome to ${projectName}!\n\n` +
     "I'm your team's AI assistant. I'll periodically check in with you " +
     "privately to understand your perspective, then share synthesized insights with the whole group.\n\n" +
@@ -67,6 +72,7 @@ async function sendWelcome(ctx: Context, state: OnboardingState): Promise<void> 
 
 async function sendRole(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
+    promptPrefix('role') +
     "What's your *role* or connection to this project?\n\n" +
     'For example: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
     'Reply with a short phrase. If another Zolara message arrives meanwhile, your next typed reply will still be saved here.',
@@ -90,6 +96,7 @@ async function sendInterests(ctx: Context, state: OnboardingState): Promise<void
     : '';
 
   await ctx.reply(
+    promptPrefix('interests') +
     `What aspects of this project are you most interested in or knowledgeable about?${goalText}\n\n` +
     'Reply in your own words, or skip if you are not sure yet.',
     { reply_markup: { inline_keyboard: [controlRow('interests')] } }
@@ -98,6 +105,7 @@ async function sendInterests(ctx: Context, state: OnboardingState): Promise<void
 
 async function sendAvailability(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
+    promptPrefix('availability') +
     'Roughly how much *time* per week can you dedicate to this?\n\n' +
     'This helps Zolara pace check-ins and avoid overloading you. An estimate is fine.',
     {
@@ -124,6 +132,7 @@ async function sendAvailability(ctx: Context, state: OnboardingState): Promise<v
 
 async function sendCommunicationStyle(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
+    promptPrefix('communication_style') +
     'Last question — how do you prefer to *interact* with me?',
     {
       parse_mode: 'Markdown',
@@ -145,6 +154,7 @@ async function sendCommunicationStyle(ctx: Context, state: OnboardingState): Pro
 
 async function sendReview(ctx: Context, state: OnboardingState): Promise<void> {
   await ctx.reply(
+    promptPrefix('review') +
     'Before I finish onboarding, here is what I saved:\n\n' +
     `Role: ${state.role || 'Participant'}\n` +
     `Interests / knowledge: ${state.interests || 'Not specified'}\n` +
@@ -389,6 +399,33 @@ export async function finalizeOnboarding(state: OnboardingState): Promise<void> 
       })
       .where(eq(members.id, member.id));
   }
+}
+
+
+export async function restartOnboardingState(
+  telegramId: number,
+  projectId: string
+): Promise<OnboardingState | null> {
+  const [member] = await db
+    .select({ id: members.id })
+    .from(members)
+    .innerJoin(users, eq(members.userId, users.id))
+    .where(and(eq(users.telegramId, telegramId), eq(members.projectId, projectId as any)))
+    .limit(1);
+
+  if (!member) return null;
+
+  const state: OnboardingState = {
+    phase: 'onboarding',
+    projectId,
+    telegramId,
+    step: 'welcome',
+    createdAt: new Date().toISOString(),
+  };
+
+  await clearOnboardingState(telegramId);
+  await saveOnboardingState(state);
+  return state;
 }
 
 // ── State Persistence ─────────────────────────────────────────────────────────

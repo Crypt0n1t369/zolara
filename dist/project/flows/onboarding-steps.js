@@ -2,7 +2,7 @@
  * Onboarding step renderers — Steps O1 through O6
  * Triggered when a user clicks /start join_{projectId} on the project bot.
  */
-import { nextOnboardingStep, prevOnboardingStep } from './onboarding-state';
+import { currentlyAnsweringLabel, nextOnboardingStep, prevOnboardingStep } from './onboarding-state';
 import { redis } from '../../data/redis';
 import { db } from '../../data/db';
 import { members, users } from '../../data/schema/projects';
@@ -32,6 +32,9 @@ function styleLabel(value) {
         balanced: 'Balanced',
     }[value ?? ''] ?? 'Not answered';
 }
+function promptPrefix(step) {
+    return `${currentlyAnsweringLabel(step)}\n\n`;
+}
 // ── Step Renderers ────────────────────────────────────────────────────────────
 async function sendWelcome(ctx, state) {
     const { projects } = await import('../../data/schema/projects');
@@ -42,7 +45,8 @@ async function sendWelcome(ctx, state) {
         .where(eq(projects.id, state.projectId))
         .limit(1);
     const projectName = project?.name ?? 'the project';
-    await ctx.reply(`👋 Welcome to ${projectName}!\n\n` +
+    await ctx.reply(promptPrefix('welcome') +
+        `👋 Welcome to ${projectName}!\n\n` +
         "I'm your team's AI assistant. I'll periodically check in with you " +
         "privately to understand your perspective, then share synthesized insights with the whole group.\n\n" +
         "Let me learn a bit about you so I can work with you effectively.");
@@ -51,7 +55,8 @@ async function sendWelcome(ctx, state) {
     await sendRole(ctx, state);
 }
 async function sendRole(ctx, state) {
-    await ctx.reply("What's your *role* or connection to this project?\n\n" +
+    await ctx.reply(promptPrefix('role') +
+        "What's your *role* or connection to this project?\n\n" +
         'For example: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
         'Reply with a short phrase. If another Zolara message arrives meanwhile, your next typed reply will still be saved here.', {
         parse_mode: 'Markdown',
@@ -68,11 +73,13 @@ async function sendInterests(ctx, state) {
     const goalText = project?.description
         ? `\n\nThe project goal is: "${project.description.slice(0, 200)}"`
         : '';
-    await ctx.reply(`What aspects of this project are you most interested in or knowledgeable about?${goalText}\n\n` +
+    await ctx.reply(promptPrefix('interests') +
+        `What aspects of this project are you most interested in or knowledgeable about?${goalText}\n\n` +
         'Reply in your own words, or skip if you are not sure yet.', { reply_markup: { inline_keyboard: [controlRow('interests')] } });
 }
 async function sendAvailability(ctx, state) {
-    await ctx.reply('Roughly how much *time* per week can you dedicate to this?\n\n' +
+    await ctx.reply(promptPrefix('availability') +
+        'Roughly how much *time* per week can you dedicate to this?\n\n' +
         'This helps Zolara pace check-ins and avoid overloading you. An estimate is fine.', {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -94,7 +101,8 @@ async function sendAvailability(ctx, state) {
     });
 }
 async function sendCommunicationStyle(ctx, state) {
-    await ctx.reply('Last question — how do you prefer to *interact* with me?', {
+    await ctx.reply(promptPrefix('communication_style') +
+        'Last question — how do you prefer to *interact* with me?', {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
@@ -111,7 +119,8 @@ async function sendCommunicationStyle(ctx, state) {
     });
 }
 async function sendReview(ctx, state) {
-    await ctx.reply('Before I finish onboarding, here is what I saved:\n\n' +
+    await ctx.reply(promptPrefix('review') +
+        'Before I finish onboarding, here is what I saved:\n\n' +
         `Role: ${state.role || 'Participant'}\n` +
         `Interests / knowledge: ${state.interests || 'Not specified'}\n` +
         `Availability: ${availabilityLabel(state.availability)}\n` +
@@ -313,6 +322,26 @@ export async function finalizeOnboarding(state) {
         })
             .where(eq(members.id, member.id));
     }
+}
+export async function restartOnboardingState(telegramId, projectId) {
+    const [member] = await db
+        .select({ id: members.id })
+        .from(members)
+        .innerJoin(users, eq(members.userId, users.id))
+        .where(and(eq(users.telegramId, telegramId), eq(members.projectId, projectId)))
+        .limit(1);
+    if (!member)
+        return null;
+    const state = {
+        phase: 'onboarding',
+        projectId,
+        telegramId,
+        step: 'welcome',
+        createdAt: new Date().toISOString(),
+    };
+    await clearOnboardingState(telegramId);
+    await saveOnboardingState(state);
+    return state;
 }
 // ── State Persistence ─────────────────────────────────────────────────────────
 const ONBOARDING_TTL = 86400; // 24 hours

@@ -66,6 +66,7 @@ import {
   loadOnboardingState,
   saveOnboardingState,
   clearOnboardingState,
+  restartOnboardingState,
 } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
@@ -182,6 +183,54 @@ zolaraBot.command('create', async (ctx) => {
   };
   await saveInitState(state);
   await handleInitiationStep(ctx, state);
+});
+
+
+zolaraBot.command('restart_onboarding', async (ctx) => {
+  const userId = ctx.from!.id;
+  const active = await loadOnboardingState(userId);
+  let projectId = active?.projectId;
+
+  if (!projectId) {
+    const rows = await db
+      .select({ projectId: members.projectId, projectName: projects.name })
+      .from(members)
+      .innerJoin(users, eq(members.userId, users.id))
+      .innerJoin(projects, eq(members.projectId, projects.id))
+      .where(eq(users.telegramId, userId))
+      .limit(2);
+
+    if (rows.length === 0) {
+      await ctx.reply('I could not find a project membership to restart. Please use your project invite link first.');
+      return;
+    }
+
+    if (rows.length > 1) {
+      await ctx.reply('You are in more than one project. Please run /restart_onboarding inside the specific project bot you want to reset.');
+      return;
+    }
+
+    if (!rows[0].projectId) {
+      await ctx.reply('I could not resolve that project membership. Please ask your admin for a fresh invite link.');
+      return;
+    }
+    projectId = rows[0].projectId;
+  }
+
+  if (!projectId) {
+    await ctx.reply('I could not resolve that project membership. Please ask your admin for a fresh invite link.');
+    return;
+  }
+
+  await clearClaimState(userId);
+  const state = await restartOnboardingState(userId, projectId);
+  if (!state) {
+    await ctx.reply('I could not find your membership for this project yet. Please use your project invite link first.');
+    return;
+  }
+
+  await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+  await handleOnboardingStep(ctx, state);
 });
 
 zolaraBot.command('cancel', async (ctx) => {

@@ -31,6 +31,7 @@ import {
   loadOnboardingState,
   saveOnboardingState,
   clearOnboardingState,
+  restartOnboardingState,
   handleOnboardingCallback,
 } from '../flows/onboarding-steps';
 import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState, clearClaimState } from '../flows/claim-steps';
@@ -81,6 +82,20 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
   });
 
 
+  // /restart_onboarding — safe reset for members who want to redo their profile
+  bot.command('restart_onboarding', async (ctx) => {
+    const userId = ctx.from!.id;
+    const state = await restartOnboardingState(userId, projectId);
+    await clearClaimState(userId);
+
+    if (!state) {
+      await ctx.reply('I could not find your membership for this project yet. Please use your project invite link first.');
+      return;
+    }
+
+    await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+    await handleOnboardingStep(ctx, state);
+  });
 
   // /my_status — concise personal state for members
   bot.command('my_status', async (ctx) => {
