@@ -12,7 +12,8 @@
     "spawner:once": "tsx scripts/spawner-server.ts once",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "lifecycle:once": "tsx scripts/lifecycle-worker.ts once"
   },
   "dependencies": {
     "self-healing-agent": "file:../self-healing-agent/dist",

@@ -11,7 +11,7 @@ import { rounds, projects, members, questions, responses, users } from '../data/
 import { runSynthesis, meetsMinimumThreshold } from './synthesis/pipeline';
 import { generateQuestions, personalizeQuestion } from './question/generator';
 import { sendQuestionDM, postReportToGroupChat, } from '../util/telegram-sender';
-import { round as roundLog, db as dbLog, llm as llmLog, telegram as telegramLog, } from '../util/logger';
+import { logger, round as roundLog, db as dbLog, llm as llmLog, telegram as telegramLog, } from '../util/logger';
 // ── Public API ─────────────────────────────────────────────────────────────────
 /**
  * Trigger a new round for a project.
@@ -238,21 +238,30 @@ async function transitionToComplete(roundId, reportData) {
  */
 export async function checkRoundDeadlines() {
     const now = new Date();
-    const expiredRounds = await db
+    const candidateRounds = await db
         .select()
         .from(rounds)
         .where(eq(rounds.status, 'gathering'))
         .limit(100);
-    for (const round of expiredRounds) {
+    let expired = 0;
+    let processed = 0;
+    let failed = 0;
+    for (const round of candidateRounds) {
         if (round.deadline && round.deadline <= now && round.projectId !== null) {
+            expired++;
             try {
                 await processRoundCompletion(round.id, round.projectId);
+                processed++;
             }
             catch (err) {
+                failed++;
                 roundLog.deadlineCheckFailed({ roundId: round.id, projectId: round.projectId ?? undefined }, err);
             }
         }
     }
+    const summary = { checked: candidateRounds.length, expired, processed, failed };
+    logger.info({ msg: '[RoundManager] deadline check complete', ...summary });
+    return summary;
 }
 /**
  * Process round completion: transition to synthesizing, run synthesis, post report.
@@ -271,6 +280,11 @@ export async function processRoundCompletion(roundId, projectId) {
         .limit(1);
     if (!round || !project)
         throw new Error('Round or project not found');
+    // Idempotency guard: deadline workers only complete rounds that are still gathering.
+    if (round.status !== 'gathering') {
+        logger.info({ msg: '[RoundManager] skipped completion for non-gathering round', roundId, projectId, status: round.status });
+        return;
+    }
     // Get response count
     const responseRows = await db
         .select()

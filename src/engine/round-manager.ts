@@ -17,11 +17,11 @@ import {
   postReportToGroupChat,
 } from '../util/telegram-sender';
 import {
+  logger,
   round as roundLog,
   db as dbLog,
   llm as llmLog,
   telegram as telegramLog,
-  redis as redisLog,
 } from '../util/logger';
 
 export interface RoundContext {
@@ -335,24 +335,35 @@ async function transitionToComplete(
  * Check all gathering rounds and transition any that are past deadline.
  * To be called by a cron job or background worker.
  */
-export async function checkRoundDeadlines(): Promise<void> {
+export async function checkRoundDeadlines(): Promise<{ checked: number; expired: number; processed: number; failed: number }> {
   const now = new Date();
 
-  const expiredRounds = await db
+  const candidateRounds = await db
     .select()
     .from(rounds)
     .where(eq(rounds.status, 'gathering'))
     .limit(100);
 
-  for (const round of expiredRounds) {
+  let expired = 0;
+  let processed = 0;
+  let failed = 0;
+
+  for (const round of candidateRounds) {
     if (round.deadline && round.deadline <= now && round.projectId !== null) {
+      expired++;
       try {
         await processRoundCompletion(round.id, round.projectId);
+        processed++;
       } catch (err) {
+        failed++;
         roundLog.deadlineCheckFailed({ roundId: round.id, projectId: round.projectId ?? undefined }, err);
       }
     }
   }
+
+  const summary = { checked: candidateRounds.length, expired, processed, failed };
+  logger.info({ msg: '[RoundManager] deadline check complete', ...summary });
+  return summary;
 }
 
 /**
@@ -373,6 +384,12 @@ export async function processRoundCompletion(roundId: string, projectId: string)
     .limit(1);
 
   if (!round || !project) throw new Error('Round or project not found');
+
+  // Idempotency guard: deadline workers only complete rounds that are still gathering.
+  if (round.status !== 'gathering') {
+    logger.info({ msg: '[RoundManager] skipped completion for non-gathering round', roundId, projectId, status: round.status });
+    return;
+  }
 
   // Get response count
   const responseRows = await db

@@ -33,7 +33,7 @@ import { startScheduledRound, triggerRound } from '../../round-manager';
 import { sendValidationDM } from './telegram-ui';
 import { sendMessage } from '../../../util/telegram-sender';
 import { llm } from '../../llm/minimax';
-import { round as roundLog } from '../../../util/logger';
+import { logger, round as roundLog } from '../../../util/logger';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -295,6 +295,30 @@ export async function tallyVotes(problemDefinitionId: string): Promise<Validatio
     .limit(1);
 
   if (!def) throw new Error('Problem definition not found');
+
+  // Idempotency guard for stale buttons / deadline worker races.
+  if (def.status && def.status !== 'voting') {
+    const votes = await db
+      .select()
+      .from(problemDefinitionVotes)
+      .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
+      .limit(100);
+
+    const voteSummary = {
+      clear: votes.filter((v) => v.vote === 'clear').length,
+      refine: votes.filter((v) => v.vote === 'refine').length,
+      unsure: votes.filter((v) => v.vote === 'unsure').length,
+      total: votes.length,
+    };
+
+    return {
+      status: def.status as 'confirmed' | 'needs_work' | 'rejected',
+      problemDefinitionId,
+      roundId: def.roundId ?? undefined,
+      confidenceScore: def.confidenceScore ?? 0,
+      voteSummary,
+    };
+  }
 
   const votes = await db
     .select()
@@ -594,7 +618,7 @@ async function voteSummaryText(votes: { vote: string }[]): Promise<string> {
  * Check all problem definitions with voting status and tally those past deadline.
  * Called by cron job.
  */
-export async function checkValidationDeadlines(): Promise<void> {
+export async function checkValidationDeadlines(): Promise<{ checked: number; expired: number; processed: number; failed: number }> {
   const now = new Date();
 
   const expiredValidations = await db
@@ -608,14 +632,25 @@ export async function checkValidationDeadlines(): Promise<void> {
     )
     .limit(100);
 
+  let expired = 0;
+  let processed = 0;
+  let failed = 0;
+
   // Filter for actually expired ones
   for (const def of expiredValidations) {
     if (def.voteDeadline && def.voteDeadline <= now) {
+      expired++;
       try {
         await tallyVotes(def.id);
+        processed++;
       } catch (err) {
+        failed++;
         roundLog.deadlineCheckFailed({ problemDefinitionId: def.id }, err);
       }
     }
   }
+
+  const summary = { checked: expiredValidations.length, expired, processed, failed };
+  logger.info({ msg: '[Validation] deadline check complete', ...summary });
+  return summary;
 }

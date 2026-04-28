@@ -536,3 +536,30 @@ Current state:
 
 Next:
 - Continue Phase 1 validation/onboarding flow improvements.
+
+## 2026-04-29 02:08 Africa/Cairo — Lifecycle deadline worker
+
+Built/fixed:
+- Added `scripts/lifecycle-worker.ts` one-shot worker for validation vote deadlines and round gathering deadlines.
+- Added Redis NX lock (`lock:lifecycle-worker`) so PM2/cron runs cannot overlap or duplicate deadline processing.
+- Added PM2 cron integration as `zolara-lifecycle-worker` running once per minute via `ecosystem.config.cjs`.
+- Added `npm run lifecycle:once` and `scripts/run-lifecycle-worker.sh` with logs appended to `/tmp/zolara-lifecycle-worker.log`.
+- Hardened deadline handlers with structured summary logs (`checked/expired/processed/failed`).
+- Added idempotency guard so round completion only processes rounds still in `gathering`.
+- Added stale validation guard in `tallyVotes()` so already-closed validation sessions do not re-run side effects.
+
+Verified:
+- `npm run build` passes.
+- `npm run test -- src/engine/round-lifecycle.integration.test.ts src/engine/phase-2-problem-def.test.ts` passes: 43 tests.
+- `npm run lifecycle:once` runs successfully and logs zero pending expired validations/rounds in live DB.
+- `pm2 startOrReload ecosystem.config.cjs --update-env` restarted Zolara and registered `zolara-lifecycle-worker`.
+- `pm2 save` persisted the process list.
+- Health endpoint OK: `GET http://localhost:3000/health`.
+
+Current state:
+- Main `zolara` PM2 app online.
+- `zolara-lifecycle-worker` is a stopped PM2 cron app between scheduled runs, expected with `autorestart:false` + `cron_restart`.
+- No expired validation or round deadlines were pending at verification time.
+
+Next:
+- Watch next live validation/round deadline to confirm logs show processing counts > 0 and no duplicate synthesis/report side effects.
