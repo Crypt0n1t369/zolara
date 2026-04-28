@@ -27,7 +27,7 @@ import { projects, admins, members, rounds, users, problemDefinitions, problemDe
 import { eq, desc, and, ne } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
-import { validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
+import { findLatestNeedsWorkValidation, refinedTopicCommandTemplate, startRefinedValidation, validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
 import { isPhaseActive } from '../engine/phases/flags';
 import { setRuntimeFlag, listRuntimeFlags } from '../util/runtime-flags';
 import {
@@ -446,6 +446,81 @@ zolaraBot.command('startround', async (ctx) => {
     await ctx.reply(`⚠️ Could not start round: ${err instanceof Error ? err.message : String(err)}`);
   }
 });
+
+zolaraBot.command('refinetopic', async (ctx) => {
+  const telegramId = ctx.from!.id;
+  const { project } = await resolveAdminProject(telegramId);
+
+  if (!project) {
+    await ctx.reply("You don't have any projects yet. Use /create to set one up.");
+    return;
+  }
+
+  const refinedTopic = (ctx.match as string).trim();
+  if (!refinedTopic || refinedTopic.length < 12) {
+    const latestNeedsWork = await findLatestNeedsWorkValidation(project.id);
+    const suggested = latestNeedsWork?.refinedText
+      ? `\n\nSuggested rewrite from Zolara:\n${refinedTopicCommandTemplate(latestNeedsWork.refinedText)}`
+      : '';
+    await ctx.reply(
+      'Please send the refined topic after the command.\n\n' +
+      'Example:\n' +
+      '/refinetopic Decide how we should improve onboarding for the first 50 beta teams' +
+      suggested
+    );
+    return;
+  }
+
+  try {
+    const latestNeedsWork = await findLatestNeedsWorkValidation(project.id);
+    if (!latestNeedsWork) {
+      await ctx.reply(
+        'No topic is currently waiting for refinement.\n\n' +
+        'Use /startround <topic> to start a fresh validation, or /dashboard to see the current state.'
+      );
+      return;
+    }
+
+    const result = await startRefinedValidation(project.id, refinedTopic, latestNeedsWork.id);
+    if (result.validationStatus === 'voting') {
+      await ctx.reply(
+        `🗳 Refined topic submitted.\n\n` +
+        `Original: ${latestNeedsWork.topicText}\n\n` +
+        `Refined: ${refinedTopic}\n\n` +
+        `Zolara has started a new validation with the team. Voting is open for 24h.\n` +
+        `New validation ID: ${result.problemDefinitionId?.slice(0, 8)}...`
+      );
+    } else {
+      await ctx.reply(result.message);
+    }
+  } catch (err) {
+    await ctx.reply(`⚠️ Could not submit refined topic: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
+async function sendAdminGuide(ctx: any): Promise<void> {
+  const { project } = await resolveAdminProject(ctx.from!.id);
+  if (!project) { await ctx.reply('❌ Admin access required.'); return; }
+
+  const latestNeedsWork = await findLatestNeedsWorkValidation(project.id);
+  const refinementLine = latestNeedsWork
+    ? `\n\nCurrent refinement needed:\nOriginal: ${latestNeedsWork.topicText}\nTry: ${refinedTopicCommandTemplate(latestNeedsWork.refinedText ?? '<clearer topic>')}`
+    : '';
+
+  await ctx.reply(
+    `Zolara admin guide\n\n` +
+    `/dashboard — see what is blocking progress\n` +
+    `/startround <topic> — start validation for a new topic\n` +
+    `/refinetopic <clearer topic> — rerun validation after a needs_work result\n` +
+    `/members — see onboarding status\n` +
+    `/invite — get the member invite link\n` +
+    `/cancelround — cancel an active gathering round` +
+    refinementLine
+  );
+}
+
+zolaraBot.command('adminguide', sendAdminGuide);
+zolaraBot.command('admin_guide', sendAdminGuide);
 
 zolaraBot.command('cancelround', async (ctx) => {
   const { project } = await resolveAdminProject(ctx.from!.id);
@@ -1213,6 +1288,11 @@ zolaraBot.on('message:managed_bot_created', async (ctx) => {
 
 zolaraBot.on('message:text', async (ctx) => {
   const text = ctx.message.text;
+
+  if (text.startsWith('/admin-guide')) {
+    await sendAdminGuide(ctx);
+    return;
+  }
 
   // Skip for commands (let command handler take over)
   if (text.startsWith('/')) return;

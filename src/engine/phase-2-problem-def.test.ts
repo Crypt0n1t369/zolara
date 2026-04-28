@@ -161,11 +161,15 @@ describe('Phase 2 — Problem Validation Gate', () => {
       expect(round.status).toBe('gathering');
     });
 
-    it('needs_work → clarification round increments', () => {
-      const def = { clarificationRound: 0, status: 'needs_work' };
-      const updated = { ...def, clarificationRound: def.clarificationRound + 1, status: 'voting' };
-      expect(updated.clarificationRound).toBe(1);
-      expect(updated.status).toBe('voting');
+    it('needs_work keeps original validation closed until admin submits a refined topic', () => {
+      const parent = { clarificationRound: 0, status: 'needs_work', topicText: 'Original topic', refinedText: null };
+      const clarified = { ...parent, clarificationRound: parent.clarificationRound + 1, refinedText: 'Suggested clearer topic' };
+      const child = { status: 'voting', topicText: clarified.refinedText };
+
+      expect(clarified.clarificationRound).toBe(1);
+      expect(clarified.status).toBe('needs_work');
+      expect(child.status).toBe('voting');
+      expect(child.topicText).toBe('Suggested clearer topic');
     });
 
     it('max clarification rounds: 3 (prevent infinite loop)', () => {

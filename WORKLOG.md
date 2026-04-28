@@ -494,3 +494,27 @@ Verified:
 
 ### Next
 - Live Telegram smoke test: tap an old onboarding button after advancing steps, and tap an old validation vote after validation closes.
+
+## 2026-04-29 01:07 EEST — Topic Refinement Rerun Flow
+
+### Built / Fixed
+- Added `/refinetopic <clearer topic>` for admins after a validation ends in `needs_work`.
+  - Finds the latest `needs_work` validation for the selected project.
+  - Stores the refined topic on the parent validation via existing `refined_text` while preserving original `topic_text`.
+  - Cancels the old scheduled validation round and starts a fresh validation for the refined topic.
+- Added `/adminguide`, `/admin_guide`, and `/admin-guide` handling with current refinement guidance when a project is waiting on a clearer topic.
+- Improved `needs_work` clarification copy: points admins to `/refinetopic <clearer topic>` and explains when `/startround` should be used for a separate topic.
+- Fixed active-validation detection to block concurrent `voting` validations instead of only stale `pending` rows.
+- Updated AI help and Phase 2 tests to document the refinement flow.
+
+### Verified
+- `npm run build` passes.
+- `npm test` passes: 10 files / 110 tests.
+- Restarted PM2 `zolara`.
+- Health check OK: `GET http://127.0.0.1:3000/health`.
+
+### Current State
+- The topic refinement loop is no longer a dead end: `needs_work` now has a clear admin command path that links original → refined using existing schema fields and reruns validation cleanly.
+
+### Next
+- Live Telegram smoke test: force a `needs_work` vote result, run `/admin-guide`, then `/refinetopic <suggested or edited topic>` and verify members receive the new validation.

@@ -104,7 +104,7 @@ export async function validateAndTriggerRound(
     .where(
       and(
         eq(problemDefinitions.projectId, projectId),
-        eq(problemDefinitions.status, 'pending')
+        eq(problemDefinitions.status, 'voting')
       )
     )
     .limit(1);
@@ -113,8 +113,8 @@ export async function validateAndTriggerRound(
     return {
       roundId: null,
       problemDefinitionId: existingValidation[0].id,
-      validationStatus: 'pending',
-      message: 'A validation is already in progress for this project',
+      validationStatus: 'voting',
+      message: 'A topic validation is already open for this project. Wait for it to finish, or check /dashboard.',
     };
   }
 
@@ -374,6 +374,80 @@ export async function tallyVotes(problemDefinitionId: string): Promise<Validatio
  * Generate clarifying questions for a problem that needs work.
  * Then send them to the group and re-run validation.
  */
+export async function findLatestNeedsWorkValidation(projectId: string): Promise<{
+  id: string;
+  topicText: string;
+  refinedText: string | null;
+  status: string | null;
+  roundId: string | null;
+  clarificationRound: number | null;
+} | null> {
+  const [def] = await db
+    .select({
+      id: problemDefinitions.id,
+      topicText: problemDefinitions.topicText,
+      refinedText: problemDefinitions.refinedText,
+      status: problemDefinitions.status,
+      roundId: problemDefinitions.roundId,
+      clarificationRound: problemDefinitions.clarificationRound,
+    })
+    .from(problemDefinitions)
+    .where(and(eq(problemDefinitions.projectId, projectId), eq(problemDefinitions.status, 'needs_work')))
+    .orderBy(desc(problemDefinitions.updatedAt))
+    .limit(1);
+
+  return def ?? null;
+}
+
+export async function startRefinedValidation(
+  projectId: string,
+  refinedTopic: string,
+  parentProblemDefinitionId?: string
+): Promise<{
+  roundId: string | null;
+  problemDefinitionId: string | null;
+  validationStatus: string | null;
+  message: string;
+  parentProblemDefinitionId: string;
+}> {
+  const parent = parentProblemDefinitionId
+    ? (await db
+      .select({ id: problemDefinitions.id, topicText: problemDefinitions.topicText, status: problemDefinitions.status, roundId: problemDefinitions.roundId })
+      .from(problemDefinitions)
+      .where(and(eq(problemDefinitions.id, parentProblemDefinitionId), eq(problemDefinitions.projectId, projectId)))
+      .limit(1))[0]
+    : await findLatestNeedsWorkValidation(projectId);
+
+  if (!parent) {
+    throw new Error('No needs_work validation found. Start a new validation with /startround <topic>.');
+  }
+
+  if (parent.status && parent.status !== 'needs_work') {
+    throw new Error('That validation is no longer waiting for refinement. Check /dashboard for the current state.');
+  }
+
+  // Existing schema has no parent_id field. Safely store the child/refined topic
+  // on the parent row's refinedText, preserving the original in topicText.
+  await db
+    .update(problemDefinitions)
+    .set({ refinedText: refinedTopic, updatedAt: new Date() })
+    .where(eq(problemDefinitions.id, parent.id));
+
+  if (parent.roundId) {
+    await db
+      .update(rounds)
+      .set({ status: 'cancelled' })
+      .where(and(eq(rounds.id, parent.roundId), eq(rounds.status, 'scheduled')));
+  }
+
+  const result = await validateAndTriggerRound(projectId, refinedTopic);
+  return { ...result, parentProblemDefinitionId: parent.id };
+}
+
+export function refinedTopicCommandTemplate(topic: string): string {
+  return `/refinetopic ${topic}`;
+}
+
 export async function runClarification(
   problemDefinitionId: string
 ): Promise<{ questions: string[]; suggestedTopic: string | null }> {
@@ -484,7 +558,9 @@ async function sendClarificationToStakeholders(problemDefinitionId: string): Pro
     `Vote result: ✅ Clear ${clear} / ⚠️ Refine ${refine} / ❓ Unsure ${unsure}.\n` +
     `Clear did not reach a strict majority, so Zolara will not start the round yet.\n\n` +
     `Use these prompts to sharpen the topic:\n${questionsText}${suggested}\n\n` +
-    `Next step: rewrite the topic and start a new validation with /startround <clearer topic>.`;
+    `Next step: reply as the admin with /refinetopic <clearer topic>. ` +
+    `Zolara will link it to this needs_work topic and start validation again. ` +
+    `You can also use /startround <topic> for a completely separate topic.`;
 
   const targets = new Set<number>();
   for (const groupId of project?.groupIds ?? []) {

@@ -33,7 +33,9 @@ A "round" is a structured consensus cycle where team members:
 
 ### Admin Commands
 - /create — start project creation flow
-- /startround — start a new consensus round with a topic
+- /startround — start validation for a new consensus round topic
+- /refinetopic — submit a clearer topic after validation returns needs_work
+- /adminguide or /admin-guide — show the admin guide and current refinement next step
 - /cancelround — cancel the current round
 - /projects — view and manage your projects
 - /members — list members in current project
