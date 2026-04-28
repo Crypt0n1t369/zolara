@@ -14,7 +14,7 @@ describe('Onboarding state machine', () => {
   describe('STEP_ORDER', () => {
     it('should have correct step sequence', () => {
       expect(ONBOARDING_STEP_ORDER).toEqual([
-        'welcome', 'role', 'interests', 'availability', 'communication_style', 'complete',
+        'welcome', 'role', 'interests', 'availability', 'communication_style', 'review', 'complete',
       ]);
     });
   });
@@ -25,7 +25,8 @@ describe('Onboarding state machine', () => {
       expect(nextOnboardingStep('role')).toBe('interests');
       expect(nextOnboardingStep('interests')).toBe('availability');
       expect(nextOnboardingStep('availability')).toBe('communication_style');
-      expect(nextOnboardingStep('communication_style')).toBe('complete');
+      expect(nextOnboardingStep('communication_style')).toBe('review');
+      expect(nextOnboardingStep('review')).toBe('complete');
     });
 
     it('should stay at complete', () => {
@@ -39,7 +40,8 @@ describe('Onboarding state machine', () => {
       expect(prevOnboardingStep('interests')).toBe('role');
       expect(prevOnboardingStep('availability')).toBe('interests');
       expect(prevOnboardingStep('communication_style')).toBe('availability');
-      expect(prevOnboardingStep('complete')).toBe('communication_style');
+      expect(prevOnboardingStep('review')).toBe('communication_style');
+      expect(prevOnboardingStep('complete')).toBe('review');
     });
 
     it('should stay at welcome', () => {

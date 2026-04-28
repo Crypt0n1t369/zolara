@@ -69,6 +69,14 @@ import {
 } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
+import {
+  dashboardNextAction,
+  escapeHtml,
+  formatOnboardingBreakdown,
+  missingResponses as calculateMissingResponses,
+  pickCurrentRound,
+  summarizeOnboarding,
+} from './dashboard';
 
 // ── Bot ───────────────────────────────────────────────────────────────────────
 
@@ -213,27 +221,6 @@ function projectSelectionKey(telegramId: number): string {
 /**
  * Build an inline keyboard for project selection.
  */
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function dashboardNextAction(args: {
-  pendingOnboarding: number;
-  validationStatus?: string | null;
-  roundStatus?: string | null;
-  missingResponses: number;
-  hasMembers: boolean;
-}): string {
-  if (!args.hasMembers) return 'Invite members with /invite.';
-  if (args.pendingOnboarding > 0) return `Nudge ${args.pendingOnboarding} pending member(s) to finish onboarding.`;
-  if (args.validationStatus === 'voting') return 'Wait for validation votes, or clarify the topic if people are unsure.';
-  if (args.validationStatus === 'needs_work') return 'Rewrite the topic and run /startround <clearer topic>.';
-  if (args.roundStatus === 'gathering' && args.missingResponses > 0) return `Wait for ${args.missingResponses} missing response(s), then synthesis can run.`;
-  if (args.roundStatus === 'scheduled') return 'Round is scheduled and waiting for validation to finish.';
-  if (args.roundStatus === 'complete') return 'Review the report, then start the next round with /startround.';
-  return 'Start a round with /startround <topic>.';
-}
 
 function statusIcon(s: string): string {
   if (s === 'active') return '🟢';
@@ -511,8 +498,8 @@ zolaraBot.command('dashboard', async (ctx) => {
     .from(members)
     .where(eq(members.projectId, project.id));
 
-  const onboarded = memberRows.filter((m) => m.onboardingStatus === 'complete').length;
-  const pendingOnboarding = memberRows.length - onboarded;
+  const onboarding = summarizeOnboarding(memberRows);
+  const onboardingBreakdown = formatOnboardingBreakdown(onboarding);
 
   const [latestValidation] = await db
     .select({
@@ -543,7 +530,7 @@ zolaraBot.command('dashboard', async (ctx) => {
   const refineVotes = validationVotes.filter((v) => v.vote === 'refine').length;
   const unsureVotes = validationVotes.filter((v) => v.vote === 'unsure').length;
 
-  const [latestRound] = await db
+  const recentRounds = await db
     .select({
       roundNumber: rounds.roundNumber,
       status: rounds.status,
@@ -554,18 +541,19 @@ zolaraBot.command('dashboard', async (ctx) => {
     })
     .from(rounds)
     .where(eq(rounds.projectId, project.id))
-    .orderBy(desc(rounds.startedAt))
-    .limit(1);
+    .orderBy(desc(rounds.roundNumber))
+    .limit(10);
 
+  const latestRound = pickCurrentRound(recentRounds);
   const responseCount = latestRound?.responseCount ?? 0;
-  const roundMemberCount = latestRound?.memberCount ?? onboarded;
-  const missingResponses = Math.max(0, roundMemberCount - responseCount);
+  const roundMemberCount = latestRound?.memberCount ?? onboarding.complete;
+  const missingResponses = calculateMissingResponses(latestRound, onboarding.complete);
   const nextAction = dashboardNextAction({
-    pendingOnboarding,
+    pendingOnboarding: onboarding.pending,
     validationStatus: latestValidation?.status,
     roundStatus: latestRound?.status,
     missingResponses,
-    hasMembers: memberRows.length > 0,
+    hasMembers: onboarding.total > 0,
   });
 
   const validationText = latestValidation
@@ -580,13 +568,18 @@ zolaraBot.command('dashboard', async (ctx) => {
       `Confidence: ${latestValidation.confidenceScore ?? '—'}/100 · Clarification round: ${latestValidation.clarificationRound ?? 0}`
     : 'No validation yet.';
 
+  const roundLabel = latestRound && ['scheduled', 'gathering', 'synthesizing'].includes(latestRound.status ?? '')
+    ? 'Current active/scheduled round'
+    : 'Latest round';
+  const roundDeadline = latestRound?.deadline ? `
+Deadline: ${latestRound.deadline.toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
   const roundText = latestRound
-    ? `Round #${latestRound.roundNumber} — <b>${escapeHtml(latestRound.status ?? 'unknown')}</b>
+    ? `${roundLabel}: #${latestRound.roundNumber} — <b>${escapeHtml(latestRound.status ?? 'unknown')}</b>
 ` +
       `Topic: ${escapeHtml(latestRound.topic ?? '—')}
 ` +
-      `Responses: ${responseCount}/${roundMemberCount} (${missingResponses} missing)`
-    : 'No round yet.';
+      `Responses: ${responseCount}/${roundMemberCount} (${missingResponses} missing)${roundDeadline}`
+    : 'No active, scheduled, or completed round yet.';
 
   await ctx.reply(
     `<b>${escapeHtml(project.name)} — Dashboard</b>
@@ -594,11 +587,13 @@ zolaraBot.command('dashboard', async (ctx) => {
 ` +
     `<b>Members</b>
 ` +
-    `Total: ${memberRows.length}
+    `Total: ${onboarding.total}
 ` +
-    `Onboarded: ${onboarded}
+    `Complete: ${onboarding.complete}
 ` +
-    `Pending onboarding: ${pendingOnboarding}
+    `Pending onboarding: ${onboarding.pending}
+` +
+    `Pending breakdown: ${escapeHtml(onboardingBreakdown)}
 
 ` +
     `<b>Latest validation</b>

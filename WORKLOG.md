@@ -395,3 +395,30 @@ Verified:
 ### Schedule
 - OpenClaw jobs scheduled from 22:00 Oslo through 08:00 Oslo, every 30 minutes.
 - Work blocks cover dashboard completion, onboarding polish, stale buttons, refined topic rerun, validation history, lifecycle workers, retry/audit, modularity, friction audit, essential functions, tests, ICP work, landing page, final integration, and handoff plan.
+
+## 2026-04-28 23:07 EEST — Round 4 Admin Dashboard Continuation
+
+### Built / Improved
+- Improved `/dashboard` admin status surface on `@Zolara_bot`.
+- Extracted dashboard helper logic into `src/project/dashboard.ts` so status decisions are testable.
+- Dashboard now shows:
+  - Member onboarding complete/pending counts.
+  - Pending onboarding breakdown by status (`fresh`, `committed`, etc.).
+  - Latest validation status, vote counts, confidence, clarification round, and refined topic if present.
+  - Current active/scheduled round preferred over an older completed round, with response counts, missing responses, and deadline.
+  - Recommended next admin action, including scheduled/gathering/synthesizing-specific guidance.
+- Added dashboard helper tests in `src/project/dashboard.test.ts`.
+- Updated stale onboarding state tests to include the existing `review` step.
+
+### Tested
+- `npm run build` — pass.
+- `npm test` — pass: 10 files / 104 tests.
+- Restarted PM2 `zolara` with updated code.
+- Verified `GET http://localhost:3000/health` returns OK.
+
+### Current State
+- Round 4 dashboard is live and materially more reliable for admins: it prioritizes active/scheduled work, surfaces missing responses clearly, and gives a concrete next action.
+
+### Next Actions
+- Exercise `/dashboard` in Telegram against a live project with pending onboarding + validation voting data.
+- Continue Round 4 admin UX polish if more status gaps appear in live use.
