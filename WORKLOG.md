@@ -375,3 +375,23 @@ Verified:
 - Rounds 1–2 are complete and pushed.
 - Round 3 is started with member-facing improvements.
 - Cron is scheduled to dispatch Round 4 admin clarity work in a bounded way.
+
+## 2026-04-28 — Round 4 Dashboard Started Immediately + Exact Night Shift Schedule
+
+### Built / Fixed
+- Added admin `/dashboard` command to the Zolara control bot.
+- Dashboard shows:
+  - Total members, onboarded members, pending onboarding.
+  - Latest validation status, topic/refined topic, Clear/Refine/Unsure vote counts, confidence, clarification round.
+  - Latest round number/status/topic and response counts/missing responses.
+  - Recommended next action based on current project state.
+- Removed earlier OS crontab approximate runner and replaced it with exact OpenClaw one-shot night-shift jobs at 30-minute Oslo intervals.
+
+### Verified
+- `npm run build` passes.
+- `npx vitest run src/engine/phase-2-problem-def.test.ts` passes: 22/22.
+- Restarted PM2 `zolara`; `/health` returns OK.
+
+### Schedule
+- OpenClaw jobs scheduled from 22:00 Oslo through 08:00 Oslo, every 30 minutes.
+- Work blocks cover dashboard completion, onboarding polish, stale buttons, refined topic rerun, validation history, lifecycle workers, retry/audit, modularity, friction audit, essential functions, tests, ICP work, landing page, final integration, and handoff plan.

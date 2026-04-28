@@ -23,7 +23,7 @@ import { config } from '../config';
 import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
-import { projects, admins, members, rounds, users } from '../data/schema/projects';
+import { projects, admins, members, rounds, users, problemDefinitions, problemDefinitionVotes } from '../data/schema/projects';
 import { eq, desc, and, ne } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
@@ -213,6 +213,28 @@ function projectSelectionKey(telegramId: number): string {
 /**
  * Build an inline keyboard for project selection.
  */
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function dashboardNextAction(args: {
+  pendingOnboarding: number;
+  validationStatus?: string | null;
+  roundStatus?: string | null;
+  missingResponses: number;
+  hasMembers: boolean;
+}): string {
+  if (!args.hasMembers) return 'Invite members with /invite.';
+  if (args.pendingOnboarding > 0) return `Nudge ${args.pendingOnboarding} pending member(s) to finish onboarding.`;
+  if (args.validationStatus === 'voting') return 'Wait for validation votes, or clarify the topic if people are unsure.';
+  if (args.validationStatus === 'needs_work') return 'Rewrite the topic and run /startround <clearer topic>.';
+  if (args.roundStatus === 'gathering' && args.missingResponses > 0) return `Wait for ${args.missingResponses} missing response(s), then synthesis can run.`;
+  if (args.roundStatus === 'scheduled') return 'Round is scheduled and waiting for validation to finish.';
+  if (args.roundStatus === 'complete') return 'Review the report, then start the next round with /startround.';
+  return 'Start a round with /startround <topic>.';
+}
+
 function statusIcon(s: string): string {
   if (s === 'active') return '🟢';
   if (s === 'archived') return '🟠';
@@ -476,6 +498,120 @@ zolaraBot.command('status', async (ctx) => {
   await ctx.reply(
     `*${project.name}*\n\nRound #${round.roundNumber}\nStatus: *${rstatus}*\nResponses: ${responseCount}/${memberCount}\nTopic: ${round.topic ?? '—'}`,
     { parse_mode: 'Markdown' }
+  );
+});
+
+
+zolaraBot.command('dashboard', async (ctx) => {
+  const { project } = await resolveAdminProject(ctx.from!.id);
+  if (!project) { await ctx.reply("You don't have any projects yet."); return; }
+
+  const memberRows = await db
+    .select({ id: members.id, onboardingStatus: members.onboardingStatus, role: members.role })
+    .from(members)
+    .where(eq(members.projectId, project.id));
+
+  const onboarded = memberRows.filter((m) => m.onboardingStatus === 'complete').length;
+  const pendingOnboarding = memberRows.length - onboarded;
+
+  const [latestValidation] = await db
+    .select({
+      id: problemDefinitions.id,
+      topicText: problemDefinitions.topicText,
+      refinedText: problemDefinitions.refinedText,
+      status: problemDefinitions.status,
+      votesReceived: problemDefinitions.votesReceived,
+      totalVoters: problemDefinitions.totalVoters,
+      confidenceScore: problemDefinitions.confidenceScore,
+      clarificationRound: problemDefinitions.clarificationRound,
+      updatedAt: problemDefinitions.updatedAt,
+    })
+    .from(problemDefinitions)
+    .where(eq(problemDefinitions.projectId, project.id))
+    .orderBy(desc(problemDefinitions.updatedAt))
+    .limit(1);
+
+  const validationVotes = latestValidation
+    ? await db
+      .select({ vote: problemDefinitionVotes.vote })
+      .from(problemDefinitionVotes)
+      .where(eq(problemDefinitionVotes.problemDefinitionId, latestValidation.id))
+      .limit(100)
+    : [];
+
+  const clearVotes = validationVotes.filter((v) => v.vote === 'clear').length;
+  const refineVotes = validationVotes.filter((v) => v.vote === 'refine').length;
+  const unsureVotes = validationVotes.filter((v) => v.vote === 'unsure').length;
+
+  const [latestRound] = await db
+    .select({
+      roundNumber: rounds.roundNumber,
+      status: rounds.status,
+      topic: rounds.topic,
+      responseCount: rounds.responseCount,
+      memberCount: rounds.memberCount,
+      deadline: rounds.deadline,
+    })
+    .from(rounds)
+    .where(eq(rounds.projectId, project.id))
+    .orderBy(desc(rounds.startedAt))
+    .limit(1);
+
+  const responseCount = latestRound?.responseCount ?? 0;
+  const roundMemberCount = latestRound?.memberCount ?? onboarded;
+  const missingResponses = Math.max(0, roundMemberCount - responseCount);
+  const nextAction = dashboardNextAction({
+    pendingOnboarding,
+    validationStatus: latestValidation?.status,
+    roundStatus: latestRound?.status,
+    missingResponses,
+    hasMembers: memberRows.length > 0,
+  });
+
+  const validationText = latestValidation
+    ? `Status: <b>${escapeHtml(latestValidation.status ?? 'unknown')}</b>
+` +
+      `Topic: ${escapeHtml(latestValidation.topicText)}
+` +
+      (latestValidation.refinedText ? `Refined: ${escapeHtml(latestValidation.refinedText)}
+` : '') +
+      `Votes: ✅ ${clearVotes} / ⚠️ ${refineVotes} / ❓ ${unsureVotes} (${latestValidation.votesReceived ?? 0}/${latestValidation.totalVoters ?? 0})
+` +
+      `Confidence: ${latestValidation.confidenceScore ?? '—'}/100 · Clarification round: ${latestValidation.clarificationRound ?? 0}`
+    : 'No validation yet.';
+
+  const roundText = latestRound
+    ? `Round #${latestRound.roundNumber} — <b>${escapeHtml(latestRound.status ?? 'unknown')}</b>
+` +
+      `Topic: ${escapeHtml(latestRound.topic ?? '—')}
+` +
+      `Responses: ${responseCount}/${roundMemberCount} (${missingResponses} missing)`
+    : 'No round yet.';
+
+  await ctx.reply(
+    `<b>${escapeHtml(project.name)} — Dashboard</b>
+
+` +
+    `<b>Members</b>
+` +
+    `Total: ${memberRows.length}
+` +
+    `Onboarded: ${onboarded}
+` +
+    `Pending onboarding: ${pendingOnboarding}
+
+` +
+    `<b>Latest validation</b>
+${validationText}
+
+` +
+    `<b>Latest round</b>
+${roundText}
+
+` +
+    `<b>Recommended next action</b>
+${escapeHtml(nextAction)}`,
+    { parse_mode: 'HTML' }
   );
 });
 
