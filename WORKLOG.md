@@ -804,3 +804,20 @@ Next actions:
 ### Next Actions
 - Run the next live `/startround` on the active test project to confirm questions are delivered end-to-end with the fallback guard in place.
 - If desired, archive/delete stale pending/deleted test projects so dashboards only show the active test surface.
+
+## 2026-04-29 08:00 Africa/Cairo — Next phase plan refresh
+
+### Built
+- Updated `docs/NEXT_PHASE_PLAN.md` to reflect the actual overnight build: dashboard, `/next`, nudges, onboarding restart/stale-button handling, topic refinement reruns, lifecycle worker, retry hardening, shared Telegram API boundary, landing page artifact, and question fallback hardening.
+- Reprioritized the plan around a production-like end-to-end loop, module boundaries for parallel development, lifecycle observability, and only then report reactions/productization.
+- Explicitly marked low-leverage work to drop/defer until the core loop is reliable.
+
+### Tested
+- `npm test -- --run` — pass: 12 files / 129 tests.
+- `npm run build` — pass.
+
+### Current State
+- Planning doc now points builders toward modular scalable distributed development rather than adding more scattered commands/features.
+
+### Next Actions
+- Commit and push the docs update after verification.

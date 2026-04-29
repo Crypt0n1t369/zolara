@@ -1,77 +1,122 @@
-# Zolara Next Phase Plan — Streamlined Distributed Project Development
+# Zolara Next Phase Plan — Modular Scalable Distributed Development
+
+_Last updated: 2026-04-29 08:00 Africa/Cairo after the overnight build block._
 
 ## Objective
-Make Zolara feel like a clear, modular consensus workflow: members know what to do next, admins know project state, and unclear topics turn into structured refinement instead of dead ends.
+Ship a reliable Telegram-first consensus loop that can be developed by multiple agents/developers without stepping on each other: clear module boundaries, durable lifecycle workers, observable state transitions, and admin/member UX that always says what is blocking progress.
 
-## Current Completed Foundation
-- Managed/project bot infrastructure exists.
-- Onboarding persists member profile data and now supports Back, Skip, edit, and final review confirmation.
-- Validation requires strict Clear majority.
-- `needs_work` now creates clarifying questions and suggested rewrite guidance.
-- First question copy now includes topic context and why the member is being asked.
-- `/my_status` gives members a personal status surface.
+## What Was Actually Built Overnight
 
-## Immediate Remaining Round
-### Round 4 — Admin Clarity Dashboard
-Build `/dashboard` for admins/project owners:
-- members onboarded vs pending
-- current validation status and vote counts
-- active/scheduled round status
-- responses received vs missing
-- next recommended action
+### Product Flow / UX
+- Admin `/dashboard` exists and now shows onboarding, validation, validation history, rounds, response progress, and recommended next action.
+- Admin `/next` gives a short action recommendation without the full dashboard.
+- Admin nudge flow exists for stalled/pending members.
+- Member `/restart_onboarding` exists and onboarding copy is more explicit about the current answer target.
+- Stale onboarding and validation buttons are handled with clearer recovery copy.
+- Validation clarification now produces actionable suggested rewrite guidance.
+- Admins can submit a refined topic and rerun validation.
+- Validation history is surfaced in dashboard/status flows.
+- Core Telegram copy was polished across initiation, onboarding, validation, question delivery, and status surfaces.
 
-Why this matters: distributed teams need a single control panel so the admin does not guess whether the project is stuck on onboarding, validation, or responses.
+### Lifecycle / Reliability
+- Lifecycle deadline worker was added for validation deadlines and round deadlines/synthesis triggers.
+- Redis NX locking was added around lifecycle worker execution.
+- LLM, Telegram send, audit, and round transition paths received retry/error hardening.
+- Question generation fallback was hardened so a bad LLM output can still produce usable round questions.
+- Integration/structural tests were expanded for lifecycle, validation, dashboard, onboarding state, and question fallback behavior.
 
-## Reprioritized Next Phase
+### Architecture / Modularity
+- Telegram Managed Bots API calls were consolidated into `src/telegram/managed-bots-api.ts` with manager/project lifecycle modules acting as compatibility boundaries.
+- `docs/BACKEND_BOUNDARIES.md` now documents the shared managed-bot API boundary.
+- Landing page/ICP artifacts were drafted and exposed through a static route; useful for positioning, but not on the critical product path.
 
-### Phase A — Flow Completeness
-1. Finish `/dashboard`.
-2. Add `/restart_onboarding` for members.
-3. Add explicit “currently answering: X” label to onboarding prompts.
-4. Add stale-button handling for old onboarding/validation buttons.
+## Current State
+Zolara now has the minimum admin/member control surfaces needed to run a distributed consensus loop without constant manual inspection. The next bottleneck is not more commands; it is making the loop production-reliable and modular enough that separate builders can own onboarding, validation, rounds, synthesis, and admin surfaces independently.
 
-### Phase B — Topic Refinement Loop
-1. Let admins submit a refined topic directly from clarification flow.
-2. Store parent/child relationship between original and refined validation.
-3. Add “use suggested topic” button if Telegram callback size allows; otherwise send command template.
-4. Show validation history in dashboard.
+## Ruthless Priority Order
 
-### Phase C — Round Lifecycle Reliability
-1. Add cron/worker for validation deadlines.
-2. Add cron/worker for round deadlines and synthesis.
-3. Add retry/alerting for failed LLM or Telegram sends.
-4. Add audit events for every state transition.
+### P0 — Prove One End-to-End Loop in Production-Like Conditions
+**Goal:** one project can onboard members, validate/refine a topic, start a round, gather responses, synthesize, post a report, and show admin/member status without manual DB edits.
 
-### Phase D — Modular Back-End Structure
-Refactor toward modules with clear boundaries:
-- `flows/onboarding` — member profile flow
-- `flows/validation` — topic validation/refinement
-- `flows/rounds` — question delivery/response collection
-- `flows/synthesis` — report generation/posting
-- `admin/dashboard` — admin status/actions
-- `infra/bots` — managed bot lifecycle/webhooks
+1. Run a fresh end-to-end smoke test using the Product Bot.
+2. Fix only blockers found in that path.
+3. Verify lifecycle worker behavior under PM2/system process management.
+4. Confirm dashboard `/next` points to the correct next action at every state.
+5. Record the runbook: commands, expected states, and common recovery steps.
 
-Each module should own:
-- commands/callbacks
-- state transitions
-- tests
-- user-facing copy
+**Exit criteria:** a new project reaches a posted synthesis report with no manual intervention except normal user/admin Telegram actions.
 
-### Phase E — Front-End / UX Scalability
-Even while Telegram-first:
-- define status cards as structured view models, not ad-hoc strings
-- keep copy builders separate from business logic
-- use consistent action labels: Back, Skip, Edit, Confirm, Restart, View status
-- prepare these view models for future web/app UI reuse
+### P1 — Hard Module Boundaries for Distributed Development
+**Goal:** enable parallel builders to work safely by owning modules instead of scattered handlers.
+
+Create/finish module boundaries around:
+- `src/project/flows/onboarding/` — member profile flow, callbacks, copy, tests.
+- `src/project/flows/validation/` — topic validation, clarification, rerun, history, tests.
+- `src/project/flows/rounds/` — question send, response collection, nudges, tests.
+- `src/engine/synthesis/` — synthesis pipeline, report shape, posting contract, tests.
+- `src/project/admin/` — dashboard, `/next`, nudges, admin-only guards, tests.
+- `src/telegram/` — Telegram API boundaries, send/retry utilities, managed bot operations.
+- `src/util/lifecycle-worker.ts` — only orchestration/locking; business transitions stay in engine modules.
+
+Rules for every module:
+- Own its command/callback handlers.
+- Own its copy builders or view models.
+- Own state transition helpers.
+- Own tests for stale buttons, invalid state, and happy path.
+- Export a small `registerXHandlers(bot, deps)` or equivalent boundary.
+
+### P2 — Lifecycle Reliability and Observability
+**Goal:** scheduled work keeps the product moving and tells us when it cannot.
+
+1. Add structured audit events for every validation and round transition not already covered.
+2. Add worker result summaries: processed, skipped, failed, locked, duration.
+3. Add failure surfacing to admin dashboard: failed synthesis, failed sends, insufficient responses.
+4. Add idempotency guards for refined-topic validation reruns and round completion.
+5. Add minimal dead-letter/retry visibility for Telegram and LLM failures.
+
+### P3 — Synthesis Report Posting + Reaction Tracking
+**Goal:** close the loop after gathering.
+
+1. Confirm report posting target selection: group, channel, or admin DM fallback.
+2. Post the synthesis report with stable inline actions.
+3. Implement report reactions: `Aligned`, `Discuss`, `Disagree`.
+4. Store reaction state and show summary in dashboard.
+5. Calculate convergence score only after reaction tracking is stable.
+
+### P4 — Productization Only After Core Loop Is Stable
+**Goal:** support acquisition without distracting from the loop.
+
+1. Keep landing page artifacts lightweight.
+2. Use ICP copy to inform onboarding/admin copy.
+3. Do not expand marketing pages until the core loop has a verified demo path.
 
 ## Drop / Defer
-- Do not build complex sub-agent coordinator behavior until core flow is reliable.
-- Do not add advanced analytics before dashboard + lifecycle workers are solid.
-- Do not overbuild multi-channel posting until Telegram project flow is clean end-to-end.
 
-## Success Criteria
-- A new member can join, onboard, answer a question, and understand what happened.
-- An unclear topic produces actionable refinement guidance.
-- An admin can run one command and know exactly what is blocking progress.
-- Scheduled workers keep validations/rounds moving without manual babysitting.
-- Build/tests pass after each round and PM2 health remains OK.
+Drop or defer these until P0-P2 are solid:
+- Complex autonomous sub-agent/project coordinator behavior inside the product.
+- Advanced analytics, embeddings, and convergence visualizations beyond basic reaction summary.
+- Multi-channel posting sophistication beyond one clear Telegram target plus fallback.
+- Web app UI work; keep Telegram-first but structure view models so a web UI can reuse them later.
+- More landing page/persona expansion beyond the current artifact.
+- Large schema redesigns unless an end-to-end blocker proves they are necessary.
+- Clever AI follow-up rounds before the first manual/scheduled round lifecycle is dependable.
+
+## Recommended Parallel Workstreams
+
+### Builder A — End-to-End Verification
+Owns P0 smoke test, blocker fixes, runbook, and PM2/worker verification.
+
+### Builder B — Module Boundary Refactor
+Owns P1 directory/interface cleanup with no behavior changes unless tests require it.
+
+### Builder C — Lifecycle Observability
+Owns P2 audit coverage, worker summaries, and dashboard failure surfacing.
+
+Only start Builder D for report reactions after Builder A proves synthesis/report posting is reachable.
+
+## Success Criteria for the Next Build Block
+- Fresh project reaches synthesis report posting through normal Telegram actions.
+- `/dashboard` and `/next` correctly identify blockers at onboarding, validation, gathering, synthesis, and failed states.
+- Lifecycle worker can be run repeatedly without duplicate transitions or duplicate reports.
+- At least one major flow is moved behind a clean module boundary with tests still passing.
+- Build and tests pass before push.
