@@ -51,22 +51,82 @@ export function formatValidationHistory(attempts, max = 5) {
         return 'No validation attempts yet.';
     return attempts.slice(0, max).map((attempt, index) => formatValidationAttemptLine(attempt, index)).join('\n');
 }
+export function recommendAdminNextAction(args) {
+    if (!args.hasMembers) {
+        return {
+            label: 'Invite the team',
+            command: '/invite',
+            detail: 'No members are connected yet. Share the invite link before starting validation or rounds.',
+            urgency: 'setup',
+        };
+    }
+    if (args.pendingOnboarding > 0) {
+        return {
+            label: 'Unblock onboarding',
+            command: '/nudge',
+            detail: `${args.pendingOnboarding} member(s) still need to finish onboarding. Send one reminder instead of manually chasing people.`,
+            urgency: 'action',
+        };
+    }
+    if (args.validationStatus === 'needs_work') {
+        const command = args.suggestedRefinedTopic
+            ? `/refinetopic ${args.suggestedRefinedTopic}`
+            : '/adminguide';
+        return {
+            label: 'Refine the topic',
+            command,
+            detail: 'The last validation did not reach clear majority. Refine the wording and rerun validation so the group can converge.',
+            urgency: 'action',
+        };
+    }
+    if (args.roundStatus === 'gathering' && args.missingResponses > 0) {
+        return {
+            label: 'Recover missing responses',
+            command: '/nudge',
+            detail: `${args.missingResponses} round response(s) are missing. Send a targeted reminder to only the people blocking synthesis.`,
+            urgency: 'action',
+        };
+    }
+    if (args.validationStatus === 'voting') {
+        return {
+            label: 'Wait for validation votes',
+            command: '/dashboard',
+            detail: 'Voting is still open. Check the dashboard for current vote counts before changing topic.',
+            urgency: 'wait',
+        };
+    }
+    if (args.roundStatus === 'scheduled') {
+        return {
+            label: 'Wait for validation to finish',
+            command: '/dashboard',
+            detail: 'A round is scheduled and should move forward after validation completes.',
+            urgency: 'wait',
+        };
+    }
+    if (args.roundStatus === 'synthesizing') {
+        return {
+            label: 'Wait for synthesis',
+            command: '/dashboard',
+            detail: 'Zolara is synthesizing responses. Check again shortly for the report state.',
+            urgency: 'wait',
+        };
+    }
+    if (args.roundStatus === 'complete') {
+        return {
+            label: 'Start the next working round',
+            command: '/startround <topic>',
+            detail: 'The latest round is complete. Start the next concrete topic when the team is ready.',
+            urgency: 'action',
+        };
+    }
+    return {
+        label: 'Start the first working round',
+        command: '/startround <topic>',
+        detail: 'Members are ready and no active round is running. Start with one clear decision or question.',
+        urgency: 'action',
+    };
+}
 export function dashboardNextAction(args) {
-    if (!args.hasMembers)
-        return 'Invite members with /invite.';
-    if (args.pendingOnboarding > 0)
-        return `Nudge ${args.pendingOnboarding} pending member(s) to finish onboarding.`;
-    if (args.validationStatus === 'voting')
-        return 'Wait for validation votes, or clarify the topic if people are unsure.';
-    if (args.validationStatus === 'needs_work')
-        return 'Rewrite the topic and run /startround <clearer topic>.';
-    if (args.roundStatus === 'scheduled')
-        return 'Round is scheduled and waiting for validation to finish.';
-    if (args.roundStatus === 'gathering' && args.missingResponses > 0)
-        return `Wait for ${args.missingResponses} missing response(s), then synthesis can run.`;
-    if (args.roundStatus === 'synthesizing')
-        return 'Wait for synthesis to finish, then review the report.';
-    if (args.roundStatus === 'complete')
-        return 'Review the report, then start the next round with /startround.';
-    return 'Start a round with /startround <topic>.';
+    const next = recommendAdminNextAction(args);
+    return `${next.label}: ${next.command} — ${next.detail}`;
 }

@@ -5,6 +5,7 @@ import {
   formatValidationHistory,
   missingResponses,
   pickCurrentRound,
+  recommendAdminNextAction,
   summarizeOnboarding,
 } from './dashboard';
 
@@ -43,7 +44,30 @@ describe('admin dashboard helpers', () => {
       roundStatus: 'gathering',
       missingResponses: 3,
       hasMembers: true,
-    })).toContain('3 missing response');
+    })).toContain('/nudge');
+  });
+
+  it('recommends a concrete admin command for each high-friction state', () => {
+    expect(recommendAdminNextAction({
+      pendingOnboarding: 2,
+      missingResponses: 0,
+      hasMembers: true,
+    }).command).toBe('/nudge');
+
+    expect(recommendAdminNextAction({
+      pendingOnboarding: 0,
+      validationStatus: 'needs_work',
+      missingResponses: 0,
+      hasMembers: true,
+      suggestedRefinedTopic: 'Decide launch scope for Friday',
+    }).command).toBe('/refinetopic Decide launch scope for Friday');
+
+    expect(recommendAdminNextAction({
+      pendingOnboarding: 0,
+      roundStatus: 'complete',
+      missingResponses: 0,
+      hasMembers: true,
+    }).command).toBe('/startround <topic>');
   });
 
   it('formats validation history with prior attempts, vote counts, clarification, and refined topic', () => {

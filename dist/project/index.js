@@ -33,7 +33,7 @@ import { handleOnboardingStep, handleOnboardingText, loadOnboardingState, saveOn
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
 import { sendMessage } from '../util/telegram-sender';
-import { dashboardNextAction, escapeHtml, formatOnboardingBreakdown, formatValidationHistory, missingResponses as calculateMissingResponses, pickCurrentRound, summarizeOnboarding, } from './dashboard';
+import { dashboardNextAction, escapeHtml, formatOnboardingBreakdown, formatValidationHistory, missingResponses as calculateMissingResponses, pickCurrentRound, recommendAdminNextAction, summarizeOnboarding, } from './dashboard';
 // ── Bot ───────────────────────────────────────────────────────────────────────
 const zolaraBot = new Bot(config.ZOLARA_BOT_TOKEN);
 // ── State helpers ─────────────────────────────────────────────────────────────
@@ -93,6 +93,7 @@ zolaraBot.command('start', async (ctx) => {
         '/create — Set up a new project\n' +
         '/projects — View your active projects\n' +
         '/startround — Trigger a perspective round\n' +
+        '/next — See the one best next admin action\n' +
         '/help — Learn more', { parse_mode: 'Markdown' });
 });
 zolaraBot.command('help', async (ctx) => {
@@ -399,6 +400,7 @@ async function sendAdminGuide(ctx) {
         : '';
     await ctx.reply(`Zolara admin guide\n\n` +
         `/dashboard — see what is blocking progress\n` +
+        `/next — show the one best next action\n` +
         `/startround <topic> — start validation for a new topic\n` +
         `/refinetopic <clearer topic> — rerun validation after a needs_work result\n` +
         `/members — see onboarding status\n` +
@@ -443,13 +445,13 @@ zolaraBot.command('members', async (ctx) => {
         .from(members)
         .where(eq(members.projectId, project.id))
         .limit(50);
-    const committed = memberRows.filter((m) => m.onboardingStatus === 'committed').length;
-    const pending = memberRows.length - committed;
+    const complete = memberRows.filter((m) => m.onboardingStatus === 'complete').length;
+    const pending = memberRows.length - complete;
     const lines = memberRows.slice(0, 20).map((m, i) => {
-        const icon = m.onboardingStatus === 'committed' ? '✅' : '⏳';
-        return `${i + 1}. ${m.role ?? 'participant'} ${icon}`;
+        const icon = m.onboardingStatus === 'complete' ? '✅' : '⏳';
+        return `${i + 1}. ${m.role ?? 'participant'} ${icon} ${m.onboardingStatus ?? 'fresh'}`;
     }).join('\n');
-    await ctx.reply(`*${project.name} — Members*\n\nTotal: ${memberRows.length} | Committed: ${committed} | Pending: ${pending}\n\n${lines || 'No members yet.'}`, { parse_mode: 'Markdown' });
+    await ctx.reply(`*${project.name} — Members*\n\nTotal: ${memberRows.length} | Complete: ${complete} | Pending: ${pending}\n\n${lines || 'No members yet.'}`, { parse_mode: 'Markdown' });
 });
 zolaraBot.command('invite', async (ctx) => {
     const { project } = await resolveAdminProject(ctx.from.id);
@@ -608,19 +610,13 @@ zolaraBot.command('status', async (ctx) => {
         `Topic: ${escapeHtml(round.topic ?? '—')}\n\n` +
         `<b>Validation history</b>\n${validationText}`, { parse_mode: 'HTML' });
 });
-zolaraBot.command('dashboard', async (ctx) => {
-    const { project } = await resolveAdminProject(ctx.from.id);
-    if (!project) {
-        await ctx.reply("You don't have any projects yet.");
-        return;
-    }
+async function loadAdminActionContext(projectId) {
     const memberRows = await db
         .select({ id: members.id, onboardingStatus: members.onboardingStatus, role: members.role })
         .from(members)
-        .where(eq(members.projectId, project.id));
+        .where(eq(members.projectId, projectId));
     const onboarding = summarizeOnboarding(memberRows);
-    const onboardingBreakdown = formatOnboardingBreakdown(onboarding);
-    const validationHistory = await loadValidationHistory(project.id, 5);
+    const validationHistory = await loadValidationHistory(projectId, 5);
     const latestValidation = validationHistory[0];
     const recentRounds = await db
         .select({
@@ -632,19 +628,30 @@ zolaraBot.command('dashboard', async (ctx) => {
         deadline: rounds.deadline,
     })
         .from(rounds)
-        .where(eq(rounds.projectId, project.id))
+        .where(eq(rounds.projectId, projectId))
         .orderBy(desc(rounds.roundNumber))
         .limit(10);
     const latestRound = pickCurrentRound(recentRounds);
+    const missingResponses = calculateMissingResponses(latestRound, onboarding.complete);
+    return { memberRows, onboarding, validationHistory, latestValidation, recentRounds, latestRound, missingResponses };
+}
+zolaraBot.command('dashboard', async (ctx) => {
+    const { project } = await resolveAdminProject(ctx.from.id);
+    if (!project) {
+        await ctx.reply("You don't have any projects yet.");
+        return;
+    }
+    const { onboarding, validationHistory, latestValidation, latestRound, missingResponses } = await loadAdminActionContext(project.id);
+    const onboardingBreakdown = formatOnboardingBreakdown(onboarding);
     const responseCount = latestRound?.responseCount ?? 0;
     const roundMemberCount = latestRound?.memberCount ?? onboarding.complete;
-    const missingResponses = calculateMissingResponses(latestRound, onboarding.complete);
     const nextAction = dashboardNextAction({
         pendingOnboarding: onboarding.pending,
         validationStatus: latestValidation?.status,
         roundStatus: latestRound?.status,
         missingResponses,
         hasMembers: onboarding.total > 0,
+        suggestedRefinedTopic: latestValidation?.refinedText,
     });
     const validationText = formatValidationHistory(validationHistory, 5);
     const roundLabel = latestRound && ['scheduled', 'gathering', 'synthesizing'].includes(latestRound.status ?? '')
@@ -683,6 +690,32 @@ ${roundText}
 ` +
         `<b>Recommended next action</b>
 ${escapeHtml(nextAction)}`, { parse_mode: 'HTML' });
+});
+zolaraBot.command('next', async (ctx) => {
+    const { project } = await resolveAdminProject(ctx.from.id);
+    if (!project) {
+        await ctx.reply("You don't have any projects yet.");
+        return;
+    }
+    const { onboarding, validationHistory, latestValidation, latestRound, missingResponses } = await loadAdminActionContext(project.id);
+    const next = recommendAdminNextAction({
+        pendingOnboarding: onboarding.pending,
+        validationStatus: latestValidation?.status,
+        roundStatus: latestRound?.status,
+        missingResponses,
+        hasMembers: onboarding.total > 0,
+        suggestedRefinedTopic: latestValidation?.refinedText,
+    });
+    const contextParts = [
+        `Members: ${onboarding.complete}/${onboarding.total} onboarded`,
+        latestValidation ? `Validation: ${latestValidation.status ?? 'unknown'}` : 'Validation: none yet',
+        latestRound ? `Round: #${latestRound.roundNumber} ${latestRound.status ?? 'unknown'} (${missingResponses} missing)` : 'Round: none yet',
+    ];
+    await ctx.reply(`<b>${escapeHtml(project.name)} — Next action</b>\n\n` +
+        `<b>${escapeHtml(next.label)}</b>\n` +
+        `Run: <code>${escapeHtml(next.command)}</code>\n\n` +
+        `${escapeHtml(next.detail)}\n\n` +
+        `<b>Context</b>\n${contextParts.map(escapeHtml).join('\n')}`, { parse_mode: 'HTML' });
 });
 // ── Admin management commands ──────────────────────────────────────────────────
 zolaraBot.command('addadmin', async (ctx) => {

@@ -628,3 +628,31 @@ Next:
 ### Next actions
 - Live Telegram test: run `/dashboard`, then `/nudge` on a project with pending members or a gathering round.
 - Consider adding a rate-limited automatic “nudge after N hours” worker using the same blocker logic.
+
+## 2026-04-29 04:08 Africa/Cairo — Night shift admin next-action command
+
+Built/fixed:
+- Added `/next` on the Zolara control bot as a concise action surface for admins.
+- Extracted dashboard recommendation logic into `recommendAdminNextAction()` so dashboard and `/next` share the same blocker priority.
+- `/next` now chooses one concrete command based on live project state:
+  - `/invite` when no members are connected.
+  - `/nudge` for pending onboarding or missing gathering-round responses.
+  - `/refinetopic <suggested topic>` / `/adminguide` after `needs_work` validation.
+  - `/dashboard` for wait states like voting/synthesizing.
+  - `/startround <topic>` when the project is ready for the next round.
+- Updated `/dashboard` recommended action copy to include the command to run.
+- Fixed `/members` to count `onboardingStatus = complete` as complete instead of the older `committed` status, and show each member status label.
+- Updated admin guide/start/help context to mention `/next` and `/nudge`.
+
+Tested:
+- `npm run build` passes.
+- `npm test -- --run src/project/dashboard.test.ts` passes: 5/5.
+- `npm test` passes: 10 files / 112 tests.
+- Restarted PM2 `zolara`; health check OK at `http://127.0.0.1:3000/health`.
+
+Current state:
+- Admins can now ask Zolara for the single next action instead of reading the whole dashboard and deciding manually.
+- Runtime online; lifecycle worker remains stopped between cron runs as expected.
+
+Next:
+- Live Telegram smoke test `/next` on a project with each blocker state: no members, pending onboarding, active gathering round, and needs_work validation.
