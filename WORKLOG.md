@@ -586,3 +586,15 @@ Next:
 **Next actions**
 - Add a small smoke test/mocked unit test around retry behavior if this grows beyond minimal hardening.
 - Consider a dedicated audit table later; current minimal implementation reuses `engagement_events`.
+
+## 2026-04-29 03:04 Africa/Cairo — Night shift modular boundary pass
+
+- Reviewed managed bot lifecycle architecture across manager and project flows.
+- Refactored duplicated Telegram Managed Bots API client code into `src/telegram/managed-bots-api.ts`.
+- Kept `src/manager/managed-bots/lifecycle.ts` and `src/project/managed-bots/lifecycle.ts` as compatibility re-export shims so feature imports remain stable.
+- Added `docs/BACKEND_BOUNDARIES.md` documenting the shared Telegram API boundary and where future shared operations should go.
+- Tested: initial `npm test -- --runInBand ...` failed because Vitest v4 does not support Jest's `--runInBand` flag; reran targeted lifecycle tests — 16/16 passed; then ran full `npm test` — 111/111 passed.
+- Built: `npm run build` passed.
+- Restarted: `pm2 restart zolara`; verified PM2 online and `GET /health` returned ok.
+- Current state: managed bot API behavior unchanged, but manager/project coupling and drift risk reduced.
+- Next: continue Phase 1 round lifecycle/member onboarding hardening per implementation guide.
