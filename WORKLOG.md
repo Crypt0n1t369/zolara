@@ -703,3 +703,20 @@ Current state:
 
 Next:
 - Convert this plan into landing page copy/components when frontend implementation starts.
+
+## 2026-04-29 05:30 Africa/Cairo — Night shift landing page draft personas 1-2
+
+Built:
+- Added `docs/landing-page.md` as a comprehensive landing page copy artifact focused on pain relief.
+- Deepened ICP persona 1 (Marta, community manager/campus operator) and persona 2 (Jānis, festival/program organizer) with daily reality, fears, pain language, promised outcomes, workflow, proof points, demo copy, and CTA structure.
+- Included hero variants, problem cards, workflow copy, proof/comparison section, use-case modules, Telegram chat simulation copy, and implementation copy rules.
+
+Tested:
+- Documentation-only change; verified markdown content directly.
+
+Current state:
+- Landing page now has a page-level copy draft that builds on `docs/ICP_LANDING_PAGE_PLAN.md` and `/tmp/TheMechanysm/specs/personas.md`.
+- Local `.env` remains modified by environment/tunnel management and was intentionally not committed.
+
+Next:
+- Convert `docs/landing-page.md` into concrete landing HTML/components or a `/partner` page variant.
