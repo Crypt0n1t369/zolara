@@ -720,3 +720,22 @@ Current state:
 
 Next:
 - Convert `docs/landing-page.md` into concrete landing HTML/components or a `/partner` page variant.
+
+## 2026-04-29 06:00 Cairo — Landing page ICP personas 3-5
+
+**Built**
+- Extended `docs/landing-page.md` beyond the Marta/Jānis core draft to cover ICP personas 3-5:
+  - Leo, quiet/underrepresented member: pain relief, objections, use cases, member-facing CTA.
+  - Ava, veteran contributor/informal steward: invisible labor, progression/stewardship objections, recognition/memory use cases, CTA.
+  - Emergency/volunteer coordinator: rapid intake, operational pulse, handover synthesis, objections, use cases, CTA.
+- Updated the page wireframe to include Leo, Ava, and emergency/volunteer sections before trust/proof/CTA.
+
+**Tested**
+- Ran `npm run build` successfully.
+
+**Current state**
+- Landing page copy artifact now covers ICP personas 1-5 with concrete product-aligned copy.
+- `.env` remains locally modified and was not touched for this work.
+
+**Next actions**
+- Convert the markdown copy into concrete `/tmp/TheMechanysm/landing/index.html` updates or a dedicated partner-page implementation pass.

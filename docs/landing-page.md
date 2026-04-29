@@ -1,7 +1,7 @@
 # Zolara Landing Page Draft — Pain Relief for Community Operators + Event Organizers
 
 **Draft status:** Night shift landing-page copy artifact  
-**Primary ICP focus:** Persona 1 Marta, Community Manager / Campus Operator; Persona 2 Jānis, Festival / Program Organizer  
+**Primary ICP focus:** Persona 1 Marta, Community Manager / Campus Operator; Persona 2 Jānis, Festival / Program Organizer; Persona 3 Leo, Quiet / Underrepresented Member; Persona 4 Ava, Veteran Contributor / Informal Steward; Persona 5 Emergency / Volunteer Coordinator  
 **Page intent:** Convert operators of creative communities, campuses, residencies, cultural hubs, and recurring community programs into a deployment conversation.  
 **Positioning principle:** Lead with relief from the daily operational pain: less chasing, less guessing, fewer legitimacy fights, less group-chat chaos.
 
@@ -165,6 +165,193 @@ Zolara sends private post-event questions while people still remember what happe
 The final report shows the creative currents across the community: common hopes, fringe ideas, practical concerns, accessibility needs, and the strongest combinations.
 
 ---
+
+
+## Persona 3 Deep Dive — Leo, Quiet / Underrepresented Member
+
+### Who Leo is
+Leo is a member whose life is shaped by the community’s decisions but who rarely speaks in public settings. He may be shy, conflict-avoidant, newer to the social center, neurodivergent, working odd hours, or simply tired of meetings where the same people perform certainty.
+
+### His daily reality
+Leo has useful information about how policies actually land: which studio rules are confusing, where accessibility breaks, what makes shared spaces feel tense, and which decisions quietly exclude people. But the available channels all feel wrong:
+
+- a town hall means speaking in front of confident regulars,
+- a group-chat post can become public conflict,
+- a direct DM to Marta feels like complaining,
+- a poll cannot explain the real issue.
+
+So his perspective stays private until the decision is already made.
+
+### What he is secretly afraid of
+- Being labeled difficult for naming a problem.
+- Getting pulled into a public debate he never wanted.
+- Sharing nuance and watching it flattened into a yes/no vote.
+- Seeing decisions made by people who are less affected than he is.
+- Contributing honestly and never knowing whether it mattered.
+
+### Landing-page pain language for Leo
+- “Participate without performing.”
+- “No meeting. No public argument. Two thoughtful questions in Telegram.”
+- “You do not have to be loud to be counted.”
+- “Your perspective can shape the synthesis without putting you on stage.”
+
+### Promised outcomes for Leo
+
+#### 1. A safe path into the decision
+Zolara asks Leo privately in Telegram. He can answer at 11pm, edit his thought before sending, and explain context without interrupting a room.
+
+#### 2. Better questions than a poll
+Instead of “Do you support the new studio policy?”, Zolara can ask: “What would make this policy hard for you to use?” and “What should Marta know before finalizing it?”
+
+#### 3. Reflection without exposure
+The report can include the theme — “late cancellations create planning stress for members with limited studio time” — without making Leo the spokesperson for the issue.
+
+#### 4. Visible contribution
+Leo can see his concern represented in the group synthesis and use `/my_status` to understand whether he has answered, whether the round is waiting, and what happens next.
+
+#### 5. Less clique-driven governance
+Because everyone receives the same private invitation, participation no longer depends on being close to the organizer or comfortable in public conflict.
+
+### Objections Leo may have
+
+| Objection | Landing-page answer |
+| --- | --- |
+| “Will leadership know I said this?” | The page should state clearly that rounds can be configured for anonymous, attributed, or mixed reporting. The default member promise is: your input shapes themes; you are not put on stage. |
+| “Is this just another survey nobody reads?” | Show the loop: private answer → validation → synthesis → group report → reaction buttons → next action. The contribution returns to the community. |
+| “Will the bot misunderstand me?” | Zolara can validate meaning before synthesis: “So the issue is predictability, not access itself. Is that right?” |
+| “Do I have to attend the follow-up meeting?” | No. Members can contribute asynchronously; meetings are only for unresolved tensions after the map exists. |
+
+### Use cases for Leo
+- Quietly raise accessibility constraints in a studio allocation round.
+- Explain why a noise policy affects night-shift workers differently.
+- Share concerns about conflict temperature without starting a public fight.
+- Validate whether the synthesis captured his point correctly.
+- React “aligned,” “want to discuss,” or “disagree” after the report is posted.
+
+### CTA for Leo-facing strips
+**Contribute without becoming the debate.**
+Answer privately in Telegram and see your perspective reflected in the group map.
+
+---
+
+## Persona 4 Deep Dive — Ava, Veteran Contributor / Informal Steward
+
+### Who Ava is
+Ava is the long-time member who holds the place together. She cleans up after events, welcomes confused newcomers, remembers why old decisions were made, knows who is close to burnout, and steps in when coordination fails. She may not be “management,” but the community already depends on her.
+
+### Her daily reality
+Ava carries invisible labor because she has context and trust. When an event needs help, people ask Ava. When a conflict starts, someone texts Ava. When a new member is lost, Ava explains the unwritten rules. The community calls itself flat, but the work is not flat; it accumulates around the same reliable people.
+
+### What she is secretly afraid of
+- Stepping back and watching important work collapse.
+- Becoming resentful because contribution is expected but not recognized.
+- Seeing newer members repeat avoidable mistakes because institutional memory lives in her head.
+- Being given responsibility without authority, budget, or process privileges.
+- Turning recognition into hierarchy that undermines equal voice.
+
+### Landing-page pain language for Ava
+- “Make invisible contribution visible — without turning seniority into hierarchy.”
+- “Stop storing institutional memory in exhausted people’s heads.”
+- “Distribute responsibility beyond the same five reliable members.”
+- “Recognition for process work, not louder opinions.”
+
+### Promised outcomes for Ava
+
+#### 1. Contribution becomes visible
+Zolara can track sustained participation in rounds, onboarding support, debriefs, and stewardship work so Ava’s invisible process labor becomes legible.
+
+#### 2. Responsibility spreads
+As more members participate and reveal skills, organizers can invite new people into specific roles instead of defaulting to Ava again.
+
+#### 3. Institutional memory becomes shared context
+Past reports, decisions, tensions, and lessons become reusable project memory. New rounds start from what the community already learned.
+
+#### 4. Stewardship can have boundaries
+Ava can help trigger a pulse check in her domain, suggest a focused round, or mentor newcomers without becoming the human inbox for every problem.
+
+#### 5. Recognition stays compatible with equal voice
+Member progression can unlock process privileges — helping initiate rounds, welcoming members, surfacing domain risks — without making Ava’s opinion count more than anyone else’s in a synthesis.
+
+### Objections Ava may have
+
+| Objection | Landing-page answer |
+| --- | --- |
+| “Will this create a hierarchy?” | Position progression as contribution recognition and process permission, not weighted voting. Every member’s perspective remains equal in the map. |
+| “Will this add more admin work for me?” | The point is to remove repetitive chasing, debriefing, and explaining. Zolara asks, reminds, validates, summarizes, and stores the memory. |
+| “Will people game contribution points?” | Use cautious language: progression is a direction, not a gamified leaderboard. Recognition should be based on sustained useful participation and steward review. |
+| “Will sensitive conflict history be exposed?” | Reports should summarize themes and decisions, not publish private member histories. Stewardship memory needs access controls. |
+
+### Use cases for Ava
+- Trigger a pulse check after noticing cleanup resentment building.
+- Capture a post-event debrief without manually interviewing volunteers.
+- Turn recurring newcomer questions into a Fresh Eyes onboarding round.
+- Export a contribution timeline for a residency, grant, or leadership application.
+- Identify two newer members ready to help with a domain instead of taking it all herself.
+
+### CTA for Ava-facing strips
+**Let the community see the work that keeps it alive.**
+Use Zolara to recognize contribution, preserve memory, and spread responsibility before the reliable people burn out.
+
+---
+
+## Persona 5 Deep Dive — Emergency / Volunteer Coordinator
+
+### Who this coordinator is
+This persona runs a temporary, fast-moving response network: mutual aid, NGO field work, civic response, crisis housing, food distribution, community safety, cleanup, or urgent volunteer mobilization. The group may be temporary, emotionally charged, and operationally messy.
+
+### Their daily reality
+People arrive with good intentions but unknown skills, availability, locations, languages, transport, safety constraints, and fatigue levels. Updates move through noisy chats. Shift handovers happen in fragments. Coordinators need signal quickly; they are not trying to run deep governance consensus during an emergency.
+
+### What they are secretly afraid of
+- Assigning someone to the wrong task because intake was incomplete.
+- Missing a safety issue because it was buried in chat.
+- Burning out the most committed volunteers in the first week.
+- Losing continuity between shifts.
+- Making a fast decision with no structured view of what is happening on the ground.
+
+### Landing-page pain language for emergency and volunteer teams
+- “Turn spontaneous volunteers into a structured response network.”
+- “Know who can help, when, where, and with what — without interviewing everyone manually.”
+- “Capture shift handovers before they become safety failures.”
+- “For fast-moving groups, Zolara becomes structured signal — not slow consensus theater.”
+
+### Promised outcomes for emergency and volunteer teams
+
+#### 1. Rapid intake without manual interviews
+Zolara can ask every volunteer the essentials in Telegram: availability, location, skills, transport, languages, physical constraints, equipment, and consent for follow-up.
+
+#### 2. Operational pulse instead of chat noise
+Short rounds can collect what changed, what is blocked, who is tired, where supplies are low, and what needs escalation.
+
+#### 3. Safer shift handovers
+End-of-shift prompts capture incidents, unresolved tasks, wellbeing signals, and practical notes while memory is fresh. The synthesis becomes the next coordinator’s starting point.
+
+#### 4. Better matching under time pressure
+The report surfaces usable groups: drivers available tonight, people with medical training, translators, kitchen coordinators, people near a specific site, and volunteers who should not be assigned heavy physical work.
+
+#### 5. Lightweight governance when needed
+When the response stabilizes, Zolara can still run alignment rounds on policy questions: safety rules, resource priorities, escalation boundaries, or whether to continue a program.
+
+### Objections emergency coordinators may have
+
+| Objection | Landing-page answer |
+| --- | --- |
+| “We do not have time for consensus.” | Position this as rapid structured intake, pulse checks, and handover synthesis. It supports decisions; it does not delay urgent command calls. |
+| “Volunteers will not install another app.” | Zolara is Telegram-native. Volunteers answer where coordination is already happening. |
+| “Sensitive data is risky.” | Ask only what the operation needs, limit visibility, avoid public raw responses, and use synthesized operational categories. |
+| “AI cannot manage a crisis.” | Zolara does not replace coordinators. It reduces manual interviewing, missed signals, and handover loss so humans can decide faster. |
+
+### Use cases for emergency and volunteer teams
+- Intake 300 spontaneous volunteers after a flood, protest, evacuation, or community emergency.
+- Build a live map of availability and skills before assigning shifts.
+- Ask “what changed since your last shift?” and synthesize handover notes.
+- Run a fatigue and safety pulse after three intense days.
+- Identify critical shortages: drivers, translators, supplies, coordinators, overnight coverage.
+
+### CTA for emergency/volunteer strips
+**When the group is moving fast, do not let signal disappear into chat.**
+Use Zolara for rapid intake, operational pulse checks, and handover synthesis in Telegram.
+
 
 ## Outcome Section
 
@@ -387,17 +574,29 @@ Collect creative input, hidden skills, capacity, risks, and post-event learning 
 **Ask privately. Synthesize clearly. Discuss only what matters.**  
 Choose a topic → members answer privately → Zolara validates meaning → report maps alignment → group reacts → follow-up round deepens unresolved points.
 
-### 6. Trust
+### 6. Leo section
+**For quiet members: contribute without becoming the debate.**  
+Private Telegram questions give members a safe way to share nuance, validate meaning, and see their perspective reflected without public performance.
+
+### 7. Ava section
+**For veteran stewards: make invisible labor visible before it burns out.**  
+Recognize sustained contribution, preserve institutional memory, and spread responsibility beyond the same reliable people.
+
+### 8. Emergency / volunteer section
+**For fast-moving response teams: turn chat chaos into operational signal.**  
+Rapid intake, availability checks, fatigue pulses, and shift handover synthesis help coordinators act without manually interviewing everyone.
+
+### 9. Trust
 **Built for quiet members, not just confident speakers.**  
 Private input. Optional anonymity. No public performance. No popularity points. Every voice helps shape the map.
 
-### 7. Proof
+### 10. Proof
 **Not another survey tool. A consensus workflow.**  
 Private 1v1 conversations, Telegram-native deployment, dedicated project bots, synthesis reports, pulse checks, brainstorm rounds, onboarding harvests, reaction tracking.
 
-### 8. CTA
+### 11. CTA
 **Start with one stuck decision.**  
-Bring the policy, event, budget, space conflict, or creative question your group keeps circling. We’ll help you design the first round.
+Bring the policy, event, budget, space conflict, volunteer operation, or creative question your group keeps circling. We’ll help you design the first round.
 
 ---
 
