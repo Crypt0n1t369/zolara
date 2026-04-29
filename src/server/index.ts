@@ -22,6 +22,7 @@ import { projects } from '../data/schema/projects';
 import { eq } from 'drizzle-orm';
 import { decrypt } from '../util/crypto';
 import { setManagedBotWebhook } from '../project/managed-bots/lifecycle';
+import { landingPageHtml } from './landing-page';
 
 // ── Self-Healing Agent Setup ───────────────────────────────────────────────────
 
@@ -57,6 +58,10 @@ app.use('*', honoLogger());
 app.get('/health', (c) =>
   c.json({ status: 'ok', service: 'zolara', timestamp: new Date().toISOString() })
 );
+
+// Static landing page
+app.get('/', (c) => c.html(landingPageHtml()));
+app.get('/landing-page', (c) => c.html(landingPageHtml()));
 
 // Webhook endpoint for managed project bots
 // URL: /webhook/projectbot/{tokenHash}

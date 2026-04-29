@@ -739,3 +739,20 @@ Next:
 
 **Next actions**
 - Convert the markdown copy into concrete `/tmp/TheMechanysm/landing/index.html` updates or a dedicated partner-page implementation pass.
+
+## 2026-04-29 — Landing Page Artifact + Static Route
+
+### Built
+- Reworked `docs/landing-page.md` from draft copy into a final, usable landing-page artifact with clear sections for hero, pain relief, 5 ICPs, workflow, FAQ, and CTA.
+- Added a simple static Hono landing page route at `/` and `/landing-page` using `src/server/landing-page.ts`.
+
+### Tested
+- `npm run build` passes.
+- `npm test` passes: 11 files / 125 tests.
+
+### Current State
+- Landing-page copy is structured for implementation and review.
+- Server can render a lightweight static landing page without adding a separate frontend framework.
+
+### Next
+- Replace placeholder CTA email once the production lead-capture destination is chosen.
