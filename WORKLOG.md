@@ -681,3 +681,25 @@ Current state:
 
 Next:
 - Live Telegram smoke tests for `/next`, `/nudge`, stale onboarding/validation buttons, and `/refinetopic` on real project states.
+
+## 2026-04-29 05:00 Africa/Cairo — Night shift ICP landing page plan
+
+Built:
+- Added `docs/ICP_LANDING_PAGE_PLAN.md` with 5 ICP personas tied to current Zolara direction:
+  - community manager/campus operator,
+  - event/festival/program organizer,
+  - quiet/underrepresented member,
+  - veteran contributor/informal steward,
+  - emergency/volunteer coordinator.
+- For each ICP, documented concrete pains, pain-relief positioning, promised outcomes, product proof points, and landing page angles.
+- Added a recommended landing page structure and copy rules focused on concrete relief over abstract alignment language.
+
+Tested:
+- Documentation-only change; verified file content directly.
+
+Current state:
+- Landing page planning now has an ICP/persona spine aligned with the community-campus pivot and current product proof points.
+- Local `.env` remains modified by environment/tunnel management and was intentionally not committed.
+
+Next:
+- Convert this plan into landing page copy/components when frontend implementation starts.
