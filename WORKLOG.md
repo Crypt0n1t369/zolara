@@ -821,3 +821,36 @@ Next actions:
 
 ### Next Actions
 - Commit and push the docs update after verification.
+
+## 2026-04-29 13:02 Africa/Cairo — Final integration pass before 08:00 Oslo
+
+### Completed rounds
+- Round 1: landing/product surface — ICP landing page plan, final landing-page artifact, and static Hono route at `/` and `/landing-page`.
+- Round 2: core Telegram flow polish — setup/initiation, onboarding, validation, gathering, synthesis/report, reactions, dashboard/status, and `/next` copy aligned to current product language.
+- Round 3: integration hardening — onboarding stale-button handling, validation vote locking/timing, dashboard escaping/history limits, lifecycle worker extraction, and question-generation fallback for malformed MiniMax output.
+- Round 4: final verification — repo status checked, build/test/lifecycle/health/PM2 checks run, generated test cache reset, and safe docs/worklog changes prepared for push.
+
+### Tested now
+- `npm run build` — pass.
+- `npm test` — pass: 12 files / 129 tests.
+- `npm run lifecycle:once` — pass: 0 expired validations, 0 expired rounds, 0 failures.
+- `curl http://127.0.0.1:3000/health` — OK (`service: zolara`).
+- PM2 status checked: `zolara`, `zolara-spawner`, and `cloudflared` online; `zolara-lifecycle-worker` stopped, expected between scheduled runs.
+- Port 3000 checked: served by the PM2-managed `scripts/start-zolara.sh` child node process.
+
+### Current state
+- `master` is aligned with `origin/master` before this WORKLOG-only final-pass commit.
+- Runtime is healthy and responding locally.
+- Local `.env` remains modified by environment/tunnel management and is intentionally not committed.
+- Vitest modified its tracked cache file under `node_modules/.vite/.../results.json`; it was reset and not committed.
+
+### Unresolved blockers / risks
+- Live Telegram smoke remains the next required validation: run `/startround` on the active test project and confirm validation → questions → responses → synthesis/report posting end-to-end.
+- `zolara-spawner` logs show an expired prior request (`837d12b4-e928-4e78-9ca5-ad1f277bb0a6`) after repeated 120s spawn timeouts; queue later removed the expired request, but spawning should be re-tested with gateway load low.
+- PM2 `zolara` error log still contains historical `EADDRINUSE` entries from earlier restarts; current process is online and `/health` is OK.
+- One managed bot auto-rehack count remains `2/3 bots registered` in startup logs; investigate stale/deleted test bot records if dashboard/webhook noise matters.
+
+### Next actions
+1. Commit and push this final WORKLOG update.
+2. Run live Telegram E2E smoke on active test project.
+3. Re-test coordinator spawning once OpenClaw gateway load is normal.
