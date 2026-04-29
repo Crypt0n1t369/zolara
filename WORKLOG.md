@@ -775,3 +775,32 @@ Current state:
 
 Next actions:
 - Continue Phase 1 core-loop hardening: onboarding edge cases, perspective gathering, synthesis report posting/reactions.
+
+## 2026-04-29 07:40 Africa/Cairo — Night shift e2e verification
+
+### Verified
+- Code-level e2e path reviewed: managed project bot creation, member claim/onboarding, validation voting, question DM routing, response capture, synthesis/report posting, reaction tracking, and dashboard/next-action views.
+- Live runtime check: `GET /health` returns OK on port 3000.
+- Managed bot webhook check: active project bots have webhooks set on the current trycloudflare host with 0 pending updates and no last Telegram webhook error.
+- Lifecycle worker one-shot: validation deadline and round deadline checks completed with 0 failures.
+
+### Fixed
+- Hardened `src/engine/question/generator.ts` so malformed MiniMax JSON no longer fails the round before questions are sent.
+- Added robust question normalization for direct arrays, `{ questions: [...] }`, `{ items: [...] }`, string question entries, and markdown-fenced JSON.
+- Added deterministic fallback questions if the LLM returns unusable output or the LLM call fails, preserving the intended validation → gathering transition.
+- Added `src/engine/question/generator.test.ts` coverage for the parsing/normalization cases that caused the prior failed round.
+
+### Tested
+- `npm test -- --run` — pass: 12 files / 129 tests.
+- `npm run build` — pass.
+- `npm run lifecycle:once` — pass.
+- Restarted PM2 `zolara` with updated code.
+- Health endpoint confirmed OK after restart.
+
+### Current State
+- Zolara server is online; project bot webhooks are re-registered on startup.
+- Previous live round `f952a100...` failed before this fix due to `LLM returned invalid question format`; future rounds should fall back instead of failing at question generation.
+
+### Next Actions
+- Run the next live `/startround` on the active test project to confirm questions are delivered end-to-end with the fallback guard in place.
+- If desired, archive/delete stale pending/deleted test projects so dashboards only show the active test surface.

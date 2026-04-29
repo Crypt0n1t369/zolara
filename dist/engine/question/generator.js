@@ -9,6 +9,86 @@ const DEPTH_CONFIG = {
     medium: { questionCount: 3, targetMinutes: 5, types: ['open', 'scale'] },
     deep: { questionCount: 5, targetMinutes: 12, types: ['open'] },
 };
+function isAllowedQuestionType(value) {
+    return value === 'open' || value === 'scale' || value === 'choice';
+}
+function stripJsonFence(text) {
+    return text
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+}
+function parseJsonMaybe(text) {
+    const trimmed = stripJsonFence(text);
+    if (!trimmed)
+        return null;
+    try {
+        return JSON.parse(trimmed);
+    }
+    catch {
+        const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+            try {
+                return JSON.parse(arrayMatch[0]);
+            }
+            catch { /* fall through */ }
+        }
+        const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+        if (objectMatch) {
+            try {
+                return JSON.parse(objectMatch[0]);
+            }
+            catch { /* fall through */ }
+        }
+    }
+    return null;
+}
+export function normalizeGeneratedQuestions(raw, count) {
+    const candidate = typeof raw === 'string'
+        ? parseJsonMaybe(raw)
+        : raw;
+    const questionList = Array.isArray(candidate)
+        ? candidate
+        : Array.isArray(candidate?.questions)
+            ? candidate.questions
+            : Array.isArray(candidate?.items)
+                ? candidate.items
+                : [];
+    return questionList
+        .map((item) => {
+        if (typeof item === 'string') {
+            const text = item.trim();
+            return text ? { text: text.slice(0, 700), type: 'open' } : null;
+        }
+        if (!item || typeof item !== 'object')
+            return null;
+        const q = item;
+        const text = typeof q.text === 'string'
+            ? q.text.trim()
+            : typeof q.question === 'string'
+                ? q.question.trim()
+                : '';
+        if (!text)
+            return null;
+        return {
+            text: text.slice(0, 700),
+            type: isAllowedQuestionType(q.type) ? q.type : 'open',
+            followUp: typeof q.followUp === 'string' ? q.followUp.slice(0, 500) : undefined,
+        };
+    })
+        .filter((q) => q !== null)
+        .slice(0, count);
+}
+function fallbackQuestions(topic, count) {
+    const templates = [
+        { text: `What feels most important for the team to understand about “${topic}” right now, and why?`, type: 'open' },
+        { text: `Where do you feel most aligned or concerned about “${topic}”?`, type: 'open' },
+        { text: `What would a good next step look like from your perspective?`, type: 'open' },
+        { text: `What risk, blind spot, or tradeoff should the group not miss?`, type: 'open' },
+        { text: `If you could clarify one thing before the team decides, what would it be?`, type: 'open' },
+    ];
+    return templates.slice(0, count);
+}
 /**
  * Generate questions for a round.
  * Returns an array of questions tailored to the project config.
@@ -55,19 +135,17 @@ Requirements:
             maxTokens: 2048,
             responseFormat: 'json',
         });
-        const questions = response.parsed;
-        if (!Array.isArray(questions) || questions.length === 0) {
-            throw new Error('LLM returned invalid question format');
+        const questions = normalizeGeneratedQuestions(response.parsed ?? response.text, count);
+        if (questions.length > 0) {
+            return questions;
         }
-        return questions.slice(0, count).map((q) => ({
-            text: q.text,
-            type: q.type ?? 'open',
-            followUp: q.followUp,
-        }));
+        const err = new Error('LLM returned invalid question format; using deterministic fallback questions');
+        llmLog.generationFailed({ projectId: params.projectId, topic: params.topic }, err);
+        return fallbackQuestions(params.topic, count);
     }
     catch (err) {
         llmLog.generationFailed({ projectId: params.projectId, topic: params.topic }, err);
-        throw err;
+        return fallbackQuestions(params.topic, count);
     }
 }
 /**
