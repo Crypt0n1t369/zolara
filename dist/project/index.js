@@ -18,8 +18,8 @@ async function answerCb(ctx, text, showAlert = false) {
 import { config } from '../config';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
-import { projects, admins, members, rounds, users, problemDefinitions, problemDefinitionVotes } from '../data/schema/projects';
-import { eq, desc, and, ne } from 'drizzle-orm';
+import { projects, admins, members, rounds, questions, responses, users, problemDefinitions, problemDefinitionVotes } from '../data/schema/projects';
+import { eq, desc, and, ne, or, isNull } from 'drizzle-orm';
 import { db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
 import { findLatestNeedsWorkValidation, refinedTopicCommandTemplate, startRefinedValidation, validateAndTriggerRound } from '../engine/phases/phase-2-problem-def';
@@ -32,6 +32,7 @@ import { handleClaimWelcome, handleClaimCallback, loadClaimState, saveClaimState
 import { handleOnboardingStep, handleOnboardingText, loadOnboardingState, saveOnboardingState, clearOnboardingState, restartOnboardingState, sendOnboardingStaleCallbackHelp, } from './flows/onboarding-steps';
 import { handleAIHelp } from './ai-help';
 import { suspendProjectAgent, restoreProjectAgent, deleteProjectAgent } from './agent/project-agent';
+import { sendMessage } from '../util/telegram-sender';
 import { dashboardNextAction, escapeHtml, formatOnboardingBreakdown, formatValidationHistory, missingResponses as calculateMissingResponses, pickCurrentRound, summarizeOnboarding, } from './dashboard';
 // ── Bot ───────────────────────────────────────────────────────────────────────
 const zolaraBot = new Bot(config.ZOLARA_BOT_TOKEN);
@@ -402,6 +403,7 @@ async function sendAdminGuide(ctx) {
         `/refinetopic <clearer topic> — rerun validation after a needs_work result\n` +
         `/members — see onboarding status\n` +
         `/invite — get the member invite link\n` +
+        `/nudge — remind pending members / missing round responses\n` +
         `/cancelround — cancel an active gathering round` +
         refinementLine);
 }
@@ -467,6 +469,83 @@ zolaraBot.command('invite', async (ctx) => {
         `Share this with your team:\n\n` +
         `${inviteLink}\n\n` +
         `Members tap "Yes, I'm in" to join and receive questions.`, { parse_mode: 'Markdown' });
+});
+zolaraBot.command('nudge', async (ctx) => {
+    const { project } = await resolveAdminProject(ctx.from.id);
+    if (!project) {
+        await ctx.reply("You don't have any projects yet.");
+        return;
+    }
+    const [proj] = await db
+        .select({ name: projects.name, botUsername: projects.botUsername })
+        .from(projects)
+        .where(eq(projects.id, project.id))
+        .limit(1);
+    const projectName = proj?.name ?? project.name;
+    const inviteLink = `https://t.me/${proj?.botUsername ?? 'Zolara_bot'}?start=claim_${project.id}`;
+    const messagesByUser = new Map();
+    const pendingOnboarding = await db
+        .select({ telegramId: users.telegramId, role: members.role, onboardingStatus: members.onboardingStatus })
+        .from(members)
+        .innerJoin(users, eq(members.userId, users.id))
+        .where(and(eq(members.projectId, project.id), or(ne(members.onboardingStatus, 'complete'), isNull(members.onboardingStatus))))
+        .limit(100);
+    for (const member of pendingOnboarding) {
+        const parts = messagesByUser.get(member.telegramId) ?? [];
+        parts.push(`• Please finish onboarding for <b>${escapeHtml(projectName)}</b>. ` +
+            `It takes about a minute and helps me ask better questions.\n${escapeHtml(inviteLink)}`);
+        messagesByUser.set(member.telegramId, parts);
+    }
+    const [activeRound] = await db
+        .select({ id: rounds.id, roundNumber: rounds.roundNumber, topic: rounds.topic, status: rounds.status })
+        .from(rounds)
+        .where(and(eq(rounds.projectId, project.id), eq(rounds.status, 'gathering')))
+        .orderBy(desc(rounds.startedAt))
+        .limit(1);
+    let missingRoundResponses = 0;
+    if (activeRound) {
+        const roundQuestions = await db
+            .select({ questionId: questions.id, telegramId: users.telegramId })
+            .from(questions)
+            .innerJoin(members, eq(questions.memberId, members.id))
+            .innerJoin(users, eq(members.userId, users.id))
+            .where(eq(questions.roundId, activeRound.id))
+            .limit(200);
+        for (const question of roundQuestions) {
+            const [answer] = await db
+                .select({ id: responses.id })
+                .from(responses)
+                .where(eq(responses.questionId, question.questionId))
+                .limit(1);
+            if (answer)
+                continue;
+            missingRoundResponses += 1;
+            const parts = messagesByUser.get(question.telegramId) ?? [];
+            parts.push(`• Round #${activeRound.roundNumber} is waiting for your perspective.\n` +
+                `Topic: ${escapeHtml(activeRound.topic ?? 'Current project question')}\n` +
+                `Open this chat and reply to the question I sent earlier.`);
+            messagesByUser.set(question.telegramId, parts);
+        }
+    }
+    if (messagesByUser.size === 0) {
+        await ctx.reply(`✅ Nothing to nudge for *${project.name}* right now.\n\n` +
+            `Onboarding is clear and there are no missing active-round responses.`, { parse_mode: 'Markdown' });
+        return;
+    }
+    let sent = 0;
+    let failed = 0;
+    for (const [telegramId, parts] of messagesByUser.entries()) {
+        const messageId = await sendMessage(telegramId, `🌀 <b>Zolara reminder</b>\n\n${parts.join('\n\n')}\n\nThank you — your input helps the team get a useful synthesis.`, { parseMode: 'HTML' }, project.id);
+        if (messageId)
+            sent += 1;
+        else
+            failed += 1;
+    }
+    await ctx.reply(`🔔 Nudge complete for *${project.name}*.\n\n` +
+        `Members messaged: ${sent}\n` +
+        `Failed/unreachable: ${failed}\n` +
+        `Pending onboarding found: ${pendingOnboarding.length}\n` +
+        `Missing active-round responses found: ${missingRoundResponses}`, { parse_mode: 'Markdown' });
 });
 async function loadValidationHistory(projectId, limit = 5) {
     const attempts = await db

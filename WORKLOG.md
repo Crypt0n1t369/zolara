@@ -598,3 +598,33 @@ Next:
 - Restarted: `pm2 restart zolara`; verified PM2 online and `GET /health` returned ok.
 - Current state: managed bot API behavior unchanged, but manager/project coupling and drift risk reduced.
 - Next: continue Phase 1 round lifecycle/member onboarding hardening per implementation guide.
+
+## 2026-04-29 03:30 EEST — Night shift user-friction audit + admin nudge command
+
+### Audit findings
+- Admin friction: `/dashboard` can identify pending onboarding / missing responses, but the admin had no direct next-action command to re-engage stalled members.
+- Member friction: members can miss onboarding or an active round question and then silently block synthesis.
+- Essential missing function selected: an admin-controlled reminder path that closes the gap between “I can see the blocker” and “I can do something about it.”
+
+### Built
+- Added `/nudge` on `@Zolara_bot` admin control plane.
+- `/nudge` collects two blocker classes for the selected project:
+  - members whose onboarding is not `complete`
+  - members with unanswered questions in the active `gathering` round
+- Sends project-bot DMs using the correct project token, combining multiple reminders per member into one message.
+- Reports sent/failed counts plus pending onboarding and missing response totals back to the admin.
+- Added `/nudge` to `/adminguide`.
+
+### Tested
+- `npm run build` — pass.
+- `npm test` — pass: 10 files / 111 tests.
+- Restarted PM2 `zolara` with updated code.
+- Verified PM2 `zolara` is online and `GET http://127.0.0.1:3000/health` returns OK.
+
+### Current state
+- Admins now have a concrete recovery action when onboarding or active-round response collection stalls.
+- No schema migration required.
+
+### Next actions
+- Live Telegram test: run `/dashboard`, then `/nudge` on a project with pending members or a gathering round.
+- Consider adding a rate-limited automatic “nudge after N hours” worker using the same blocker logic.
