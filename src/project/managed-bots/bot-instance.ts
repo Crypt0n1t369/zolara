@@ -76,7 +76,7 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
       '2. Complete onboarding\n' +
       '3. Answer questions when a round is active\n' +
       '4. React to synthesis reports in your group\n\n' +
-      'Questions? Ask your admin or type them here.',
+      'Questions? Ask your admin, or type here and I’ll help if I can.',
       { parse_mode: 'Markdown' }
     );
   });
@@ -93,7 +93,7 @@ function wireProjectBotHandlers(bot: Bot, projectId: string): void {
       return;
     }
 
-    await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+    await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress answers for this project.');
     await handleOnboardingStep(ctx, state);
   });
 

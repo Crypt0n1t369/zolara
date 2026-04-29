@@ -47,9 +47,9 @@ async function sendWelcome(ctx, state) {
     const projectName = project?.name ?? 'the project';
     await ctx.reply(promptPrefix('welcome') +
         `👋 Welcome to ${projectName}!\n\n` +
-        "I'm your team's AI assistant. I'll periodically check in with you " +
-        "privately to understand your perspective, then share synthesized insights with the whole group.\n\n" +
-        "Let me learn a bit about you so I can work with you effectively.");
+        "I'm your team's Zolara assistant. I'll check in with you privately, collect your perspective, " +
+        "and share synthesized insights with the group.\n\n" +
+        "First, I’ll ask a few quick questions so I can make future prompts relevant to you.");
     state.step = nextOnboardingStep(state.step);
     await saveOnboardingState(state);
     await sendRole(ctx, state);
@@ -57,8 +57,8 @@ async function sendWelcome(ctx, state) {
 async function sendRole(ctx, state) {
     await ctx.reply(promptPrefix('role') +
         "What's your *role* or connection to this project?\n\n" +
-        'For example: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
-        'Reply with a short phrase. If another Zolara message arrives meanwhile, your next typed reply will still be saved here.', {
+        'Examples: "Team lead", "Designer", "Stakeholder", "New member"\n\n' +
+        'Reply with a short phrase.', {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [controlRow('role')] },
     });
@@ -74,13 +74,13 @@ async function sendInterests(ctx, state) {
         ? `\n\nThe project goal is: "${project.description.slice(0, 200)}"`
         : '';
     await ctx.reply(promptPrefix('interests') +
-        `What aspects of this project are you most interested in or knowledgeable about?${goalText}\n\n` +
+        `Which parts of this project are you most interested in or knowledgeable about?${goalText}\n\n` +
         'Reply in your own words, or skip if you are not sure yet.', { reply_markup: { inline_keyboard: [controlRow('interests')] } });
 }
 async function sendAvailability(ctx, state) {
     await ctx.reply(promptPrefix('availability') +
         'Roughly how much *time* per week can you dedicate to this?\n\n' +
-        'This helps Zolara pace check-ins and avoid overloading you. An estimate is fine.', {
+        'An estimate is fine. I use this to keep check-ins realistic.', {
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
@@ -120,7 +120,7 @@ async function sendCommunicationStyle(ctx, state) {
 }
 async function sendReview(ctx, state) {
     await ctx.reply(promptPrefix('review') +
-        'Before I finish onboarding, here is what I saved:\n\n' +
+        'Before I finish, here’s what I saved:\n\n' +
         `Role: ${state.role || 'Participant'}\n` +
         `Interests / knowledge: ${state.interests || 'Not specified'}\n` +
         `Availability: ${availabilityLabel(state.availability)}\n` +
@@ -143,12 +143,11 @@ async function sendReview(ctx, state) {
 }
 async function sendComplete(ctx, state) {
     await ctx.reply("🎉 *You're all set!*\n\n" +
-        "I'll reach out when it's time for the next check-in. In the meantime, " +
-        "feel free to message me anytime with questions or thoughts about the project.\n\n" +
-        'Commands:\n' +
-        '/status — See current project status\n' +
-        '/perspective — Review your past contributions\n' +
-        '/help — See all available commands', { parse_mode: 'Markdown' });
+        "I'll message you here when a round needs your perspective. You can also send me questions or thoughts about the project anytime.\n\n" +
+        'Useful commands:\n' +
+        '/my_status — See your onboarding and round status\n' +
+        '/restart_onboarding — Update your profile\n' +
+        '/help — See what this bot can do', { parse_mode: 'Markdown' });
 }
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 export async function handleOnboardingStep(ctx, state) {
@@ -233,13 +232,13 @@ export async function handleOnboardingCallback(ctx, state, data) {
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
             await handleOnboardingStep(ctx, newState);
-            await ctx.answerCallbackQuery('Got it, thanks!');
+            await ctx.answerCallbackQuery('Saved');
             return newState;
         case 'style':
             newState.communicationStyle = payload;
             newState.step = 'review';
             await saveOnboardingState(newState);
-            await ctx.answerCallbackQuery('Perfect!');
+            await ctx.answerCallbackQuery('Saved');
             await handleOnboardingStep(ctx, newState);
             return newState;
         default:
@@ -321,18 +320,18 @@ export async function handleOnboardingText(ctx, state, text) {
             newState.role = trimmed.slice(0, 200);
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
-            await ctx.reply('Got it — I saved your role.');
+            await ctx.reply('Saved — thanks.');
             await handleOnboardingStep(ctx, newState);
             break;
         case 'interests':
             newState.interests = trimmed.slice(0, 500);
             newState.step = nextOnboardingStep(state.step);
             await saveOnboardingState(newState);
-            await ctx.reply('Got it — I saved that and will use it to make your questions more relevant.');
+            await ctx.reply('Saved — I’ll use that to make future questions more relevant.');
             await handleOnboardingStep(ctx, newState);
             break;
         default:
-            await ctx.reply('Please use one of the buttons above, or tap Back/Skip if you want to change course.');
+            await ctx.reply('Please use one of the buttons above, or tap Back/Skip to change course.');
             break;
     }
     return newState;

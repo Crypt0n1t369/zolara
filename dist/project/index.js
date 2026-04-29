@@ -89,10 +89,10 @@ zolaraBot.command('start', async (ctx) => {
         }
     }
     await ctx.reply('🌀 *Zolara* — AI Consensus Engine\n\n' +
-        'I help teams find alignment through structured perspective gathering.\n\n' +
+        'I help teams turn scattered perspectives into clear group alignment.\n\n' +
         '/create — Set up a new project\n' +
         '/projects — View your active projects\n' +
-        '/startround — Trigger a perspective round\n' +
+        '/startround — Start a perspective round\n' +
         '/next — See the one best next admin action\n' +
         '/help — Learn more', { parse_mode: 'Markdown' });
 });
@@ -101,9 +101,9 @@ zolaraBot.command('help', async (ctx) => {
         '1️⃣ *Create* a project and bot for your team (/create)\n' +
         '2️⃣ *Invite* members via the link from /invite\n' +
         '3️⃣ *Start a round* to gather perspectives (/startround)\n' +
-        '4️⃣ *Receive* an AI synthesis report in your group\n' +
+        '4️⃣ *Receive* a synthesis report in your group\n' +
         '5️⃣ *Deepen* alignment through follow-up rounds\n\n' +
-        '💬 Ask me anything in natural language — type your question below!', { parse_mode: 'Markdown' });
+        '💬 You can also ask questions in plain language.', { parse_mode: 'Markdown' });
 });
 zolaraBot.command('helpme', async (ctx) => {
     const raw = ctx.message?.text ?? '';
@@ -138,7 +138,7 @@ zolaraBot.command('restart_onboarding', async (ctx) => {
             return;
         }
         if (rows.length > 1) {
-            await ctx.reply('You are in more than one project. Please run /restart_onboarding inside the specific project bot you want to reset.');
+            await ctx.reply('You are in more than one project. Run /restart_onboarding inside the project bot you want to reset.');
             return;
         }
         if (!rows[0].projectId) {
@@ -157,7 +157,7 @@ zolaraBot.command('restart_onboarding', async (ctx) => {
         await ctx.reply('I could not find your membership for this project yet. Please use your project invite link first.');
         return;
     }
-    await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+    await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress answers for this project.');
     await handleOnboardingStep(ctx, state);
 });
 zolaraBot.command('cancel', async (ctx) => {
@@ -313,10 +313,10 @@ zolaraBot.command('startround', async (ctx) => {
     }
     const topic = ctx.match.trim();
     if (!topic || topic.length < 12) {
-        await ctx.reply('Please start the round with a clear objective.\n\n' +
+        await ctx.reply('Please start the round with a clear objective or question.\n\n' +
             'Example:\n' +
             '/startround Align on the first onboarding experience for new Zolara teams\n\n' +
-            'The topic should describe what the team is trying to decide, understand, or improve.');
+            'The topic should describe what the team needs to decide, understand, or improve.');
         return;
     }
     try {
@@ -327,7 +327,7 @@ zolaraBot.command('startround', async (ctx) => {
                 await ctx.reply(`🗳 *Validation started for "${topic}"*
 
 ` +
-                    `Your team is being asked to confirm the topic is clearly defined before we explore it.
+                    `Your team is being asked to confirm the topic is clear enough to explore.
 ` +
                     `Voting open for 24h. You'll be notified when the vote completes.\n\n` +
                     `Problem Definition ID: ${result.problemDefinitionId?.slice(0, 8)}...`, { parse_mode: 'Markdown' });
@@ -339,7 +339,7 @@ zolaraBot.command('startround', async (ctx) => {
         else {
             const { roundId } = await triggerRound(project.id, topic);
             await ctx.reply(`🎯 *Round started!*\n\nProject: *${project.name}*\nTopic: ${topic}\nRound ID: ${roundId.slice(0, 8)}...\n\n` +
-                `Committed members are being sent questions via DM.`, { parse_mode: 'Markdown' });
+                `Committed members are being sent questions by DM.`, { parse_mode: 'Markdown' });
         }
     }
     catch (err) {
@@ -369,7 +369,7 @@ zolaraBot.command('refinetopic', async (ctx) => {
         const latestNeedsWork = await findLatestNeedsWorkValidation(project.id);
         if (!latestNeedsWork) {
             await ctx.reply('No topic is currently waiting for refinement.\n\n' +
-                'Use /startround <topic> to start a fresh validation, or /dashboard to see the current state.');
+                'Use /startround <topic> to start a fresh validation, or /dashboard to check the current state.');
             return;
         }
         const result = await startRefinedValidation(project.id, refinedTopic, latestNeedsWork.id);
@@ -470,7 +470,7 @@ zolaraBot.command('invite', async (ctx) => {
     await ctx.reply(`*${project.name} - Invite Link*\n\n` +
         `Share this with your team:\n\n` +
         `${inviteLink}\n\n` +
-        `Members tap "Yes, I'm in" to join and receive questions.`, { parse_mode: 'Markdown' });
+        `Members tap “Yes, I’m in,” finish onboarding, and receive questions here.`, { parse_mode: 'Markdown' });
 });
 zolaraBot.command('nudge', async (ctx) => {
     const { project } = await resolveAdminProject(ctx.from.id);
@@ -531,13 +531,13 @@ zolaraBot.command('nudge', async (ctx) => {
     }
     if (messagesByUser.size === 0) {
         await ctx.reply(`✅ Nothing to nudge for *${project.name}* right now.\n\n` +
-            `Onboarding is clear and there are no missing active-round responses.`, { parse_mode: 'Markdown' });
+            `Onboarding is complete and there are no missing active-round responses.`, { parse_mode: 'Markdown' });
         return;
     }
     let sent = 0;
     let failed = 0;
     for (const [telegramId, parts] of messagesByUser.entries()) {
-        const messageId = await sendMessage(telegramId, `🌀 <b>Zolara reminder</b>\n\n${parts.join('\n\n')}\n\nThank you — your input helps the team get a useful synthesis.`, { parseMode: 'HTML' }, project.id);
+        const messageId = await sendMessage(telegramId, `🌀 <b>Zolara reminder</b>\n\n${parts.join('\n\n')}\n\nThank you — your input helps the team get a clearer synthesis.`, { parseMode: 'HTML' }, project.id);
         if (messageId)
             sent += 1;
         else

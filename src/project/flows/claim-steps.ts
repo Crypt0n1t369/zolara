@@ -33,11 +33,11 @@ export async function handleClaimWelcome(
     `🏠 ${state.projectName}\n\n` +
     `You're joining as a team member. Here's what that means:\n\n` +
     `📋 *Your commitment:*\n` +
-    `• When a round starts, I'll DM you a question\n` +
-    `• You reply with your honest perspective (~2 min)\n` +
+    `• When a round starts, I’ll DM you a question\n` +
+    `• You reply with your honest perspective — a few sentences is enough\n` +
     `${anonNote}\n\n` +
-    `⚡ *No obligation* — skip a round if you're busy.\n\n` +
-    `Ready to commit?`,
+    `⚡ *No pressure* — skip a round if you are busy.\n\n` +
+    `Ready to join?`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -77,7 +77,7 @@ export async function handleClaimCallback(
     await ctx.reply(
       `🎉 *You're in!*
 
-Your commitment is recorded. Let me learn a bit about you so I can work with you effectively.`,
+You are connected. I’ll ask a few quick onboarding questions so future prompts are relevant.`,
       { parse_mode: 'Markdown' }
     );
     await handleOnboardingStep(ctx, onboardingState);
@@ -88,7 +88,7 @@ Your commitment is recorded. Let me learn a bit about you so I can work with you
     await ctx.answerCallbackQuery();
     await clearClaimState(state.telegramId);
     await ctx.reply(
-      'No worries. You can join anytime using the invite link from your team.\n\n' +
+      'No worries. You can join later using the invite link from your team.\n\n' +
       'Questions? Just send /help.',
       { parse_mode: 'Markdown' }
     );

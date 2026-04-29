@@ -24,25 +24,25 @@ export function staleValidationMessage(status?: string | null): string {
   if (normalized === 'missing') {
     return (
       '↪️ This validation button no longer matches an active topic.\n\n' +
-      'Use /status to see the current round/validation state, or ask the admin to start a fresh validation with /startround.'
+      'Use /status to check the current state, or ask the admin to start a fresh validation with /startround.'
     );
   }
 
   if (normalized === 'voting') {
-    return 'This validation is still open. Use the latest validation message buttons, or /status to review progress.';
+    return 'This validation is still open. Use the latest validation message buttons, or /status to check progress.';
   }
 
   const statusText: Record<string, string> = {
     confirmed: 'This topic has already been confirmed and the round has moved forward.',
-    needs_work: 'This topic has moved to clarification, so the old vote buttons are closed.',
-    rejected: 'This validation has ended and the topic was not accepted.',
+    needs_work: 'This topic needs clarification, so the old vote buttons are closed.',
+    rejected: 'This validation ended and the topic was not accepted.',
     abandoned: 'This validation was cancelled.',
     pending: 'This validation is not accepting votes yet.',
   };
 
   return (
     `↪️ ${statusText[normalized] ?? 'This validation is no longer accepting votes.'}\n\n` +
-    'Use “View topic” on the latest message or /status to review the current state. ' +
+    'Use “View topic” on the latest message or /status to check the current state. ' +
     'If the team needs to revisit it, the admin can start a fresh validation with /startround.'
   );
 }
@@ -59,14 +59,12 @@ export async function sendValidationDM(
 ): Promise<void> {
   const safeTopic = escapeHtml(topic);
   const message =
-    `🗳 <b>Topic Validation Required</b>\n\n` +
-    `A round has been proposed for: <b>${safeTopic}</b>\n\n` +
-    `Before we explore this topic, your team needs to confirm it's clearly defined.\n\n` +
-    `Is "${safeTopic}" clearly defined?\n\n` +
-    `• ✅ Clear — I understand the problem, let's explore it\n` +
-    `• ⚠️ Refine — Needs clarification or more specificity\n` +
-    `• ❓ Not sure — I need more context before deciding\n\n` +
-    `Your vote helps the team start with the right foundation.\n` +
+    `🗳 <b>Topic validation</b>\n\n` +
+    `Proposed round topic: <b>${safeTopic}</b>\n\n` +
+    `Before we ask everyone deeper questions, please confirm whether this topic is clear enough to explore.\n\n` +
+    `• ✅ Clear — I understand the topic and we can proceed\n` +
+    `• ⚠️ Refine — It needs clearer wording or more specificity\n` +
+    `• ❓ Not sure — I need more context before voting\n\n` +
     `Tap your choice below:`;
 
   for (const member of memberList) {
@@ -155,7 +153,7 @@ export async function handleVoteCallback(
 
     if (!member) {
       return {
-        text: '❌ You are not registered for this project yet. Use /start with your invite link to join, or /status to review your current connection.',
+        text: '❌ You are not registered for this project yet. Use your project invite link to join, or /status to check your connection.',
         alert: true,
       };
     }
@@ -195,8 +193,8 @@ export async function handleVoteCallback(
     return {
       text:
         `${voteLabel} recorded ✅\n\n` +
-        `Waiting for other team members to vote...\n` +
-        `I'll let you know when the vote is complete.`,
+        `Waiting for the rest of the team to vote...\n` +
+        `I’ll let you know when validation is complete.`,
       alert: false,
     };
   } catch (err) {
@@ -258,9 +256,9 @@ function formatTallyResult(result: {
   const majorityNeeded = Math.floor(total / 2) + 1;
   const statusText = {
     confirmed:
-      `Confirmed because ✅ Clear reached a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). The round is starting now.`,
+      `Confirmed: ✅ Clear reached a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). The round is starting now.`,
     needs_work:
-      `Needs clarification because ✅ Clear did not reach a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). I’ll send the admin/team clarification prompts next.`,
+      `Needs clarification: ✅ Clear did not reach a strict majority (${voteSummary.clear}/${total}; needed ${majorityNeeded}). I’ll send clarification prompts next.`,
     rejected: 'Problem could not be validated — admin notified.',
   }[status] ?? 'Unknown status';
 
@@ -295,11 +293,11 @@ export async function sendClarificationToGroup(
     .join('\n');
 
   const message =
-    `⚠️ <b>Problem Needs Clarification</b>\n\n` +
-    `The topic <b>"${escapeHtml(topic)}"</b> needs clarification before we can proceed.\n\n` +
-    `Please discuss and refine the problem definition:\n\n` +
+    `⚠️ <b>Topic needs clarification</b>\n\n` +
+    `The topic <b>"${escapeHtml(topic)}"</b> needs clearer wording before the round can proceed.\n\n` +
+    `Discuss these prompts, then restart validation with a refined topic:\n\n` +
     `${questionsText}\n\n` +
-    `When you're ready, rewrite the topic and start a new validation with /startround.`;
+    `When you are ready, rewrite the topic and start a new validation with /startround.`;
 
   await sendMessage(groupId, message, {
     parseMode: 'HTML',

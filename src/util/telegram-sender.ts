@@ -141,11 +141,11 @@ export async function sendQuestionDM(
 ): Promise<number | null> {
   const topicText = topic ? `Topic: *${topic}*\n\n` : '';
   const message =
-    `🌀 *Round ${roundNumber} — Your Perspective*\n\n` +
+    `🌀 *Round ${roundNumber} — your perspective*\n\n` +
     topicText +
     `${questionText}\n\n` +
-    `Why I’m asking: your answer helps the group see different perspectives before Zolara writes the synthesis.\n\n` +
-    `Reply to this message with your answer. All responses are anonymous in the final report.`;
+    `Reply in your own words. A few sentences is enough unless you want to go deeper.\n\n` +
+    `Your response helps Zolara write a balanced synthesis for the group. Reports follow the project’s anonymity settings.`;
 
   // Store question state so we can route the response back
   // Per-project Redis key for multi-bot isolation
@@ -197,8 +197,8 @@ export async function postReportToGroupChat(
 
   // Message 1: Hook/Summary
   const hookText =
-    `🌀 *Round ${roundNumber} Synthesis*\n\n` +
-    `📊 ${responseCount}/${memberCount} members shared their perspective\n\n` +
+    `🌀 *Round ${roundNumber} synthesis*\n\n` +
+    `📊 ${responseCount}/${memberCount} members responded\n\n` +
     `📈 Convergence: ${convergenceScore}% (${convergenceTier}) ${scoreBar}`;
 
   const msg1Id = await sendMessage(groupId, hookText, { parseMode: 'Markdown' }, projectId);
@@ -213,7 +213,7 @@ export async function postReportToGroupChat(
     .join('\n\n');
 
   if (alignments) {
-    const msg2Id = await sendMessage(groupId, `*Theme Alignments*\n\n${alignments}`, {
+    const msg2Id = await sendMessage(groupId, `*Theme alignment*\n\n${alignments}`, {
       parseMode: 'Markdown',
     }, projectId);
     if (msg2Id) messageIds.push(msg2Id);
@@ -224,22 +224,22 @@ export async function postReportToGroupChat(
 
   if (commonGround.length > 0) {
     detailsParts.push(
-      `*Common Ground*\n${commonGround.map((g) => `• ${g}`).join('\n')}`
+      `*Common ground*\n${commonGround.map((g) => `• ${g}`).join('\n')}`
     );
   }
   if (creativeTensions.length > 0) {
     detailsParts.push(
-      `*Creative Tensions*\n${creativeTensions.map((t) => `⚡ ${t}`).join('\n')}`
+      `*Creative tensions*\n${creativeTensions.map((t) => `⚡ ${t}`).join('\n')}`
     );
   }
   if (blindSpots.length > 0) {
     detailsParts.push(
-      `*Blind Spots*\n${blindSpots.map((b) => `🔍 ${b}`).join('\n')}`
+      `*Blind spots*\n${blindSpots.map((b) => `🔍 ${b}`).join('\n')}`
     );
   }
   if (actionItems.length > 0) {
     detailsParts.push(
-      `*Action Items*\n${actionItems.map((a) => `→ ${a.title}`).join('\n')}`
+      `*Action items*\n${actionItems.map((a) => `→ ${a.title}`).join('\n')}`
     );
   }
 
@@ -253,18 +253,18 @@ export async function postReportToGroupChat(
   // Message 4: Reaction buttons
   const msg4Id = await sendMessage(
     groupId,
-    `What do you think of this synthesis?`,
+    `How does this synthesis land with you?`,
     {
       parseMode: 'Markdown',
       replyMarkup: {
         inline_keyboard: [
           [
-            { text: '👍 Aligned', callback_data: `reaction:${projectId}:${roundNumber}:aligned` },
-            { text: '🤔 Conditional', callback_data: `reaction:${projectId}:${roundNumber}:conditional` },
-            { text: '❌ Divergent', callback_data: `reaction:${projectId}:${roundNumber}:divergent` },
+            { text: '✅ Aligned', callback_data: `reaction:${projectId}:${roundNumber}:aligned` },
+            { text: '💬 Want to discuss', callback_data: `reaction:${projectId}:${roundNumber}:discuss` },
+            { text: '❌ Disagree', callback_data: `reaction:${projectId}:${roundNumber}:disagree` },
           ],
           [
-            { text: '📌 Save Actions', callback_data: `reaction:${projectId}:${roundNumber}:save_actions` },
+            { text: '📌 Save actions', callback_data: `reaction:${projectId}:${roundNumber}:save_actions` },
           ],
         ],
       },
@@ -288,10 +288,10 @@ export async function sendReminderDM(
 ): Promise<number | null> {
   const reminderText =
     nudgeCount === 1
-      ? `⏰ *Round ${roundNumber} reminder*\n\nYou haven't shared your perspective yet.\n\nTap the link from your group invite to answer — takes only a few minutes.`
+      ? `⏰ *Round ${roundNumber} reminder*\n\nThis round is waiting for your perspective. Open this chat and reply to the question I sent earlier — a short answer is enough.`
       : nudgeCount >= 3
-      ? `🔴 *Round ${roundNumber} — Last chance*\n\nYour team is waiting for your perspective. The round closes soon — share your view before it ends.`
-      : `⏰ *Round ${roundNumber} nudge*\n\nStill time to share your perspective before the round closes.`;
+      ? `🔴 *Round ${roundNumber} closes soon*\n\nLast reminder: share your perspective before this round closes.`
+      : `⏰ *Round ${roundNumber} reminder*\n\nThere is still time to share your perspective before the round closes.`;
 
   return sendMessage(userId, reminderText, { parseMode: 'Markdown' }, projectId);
 }

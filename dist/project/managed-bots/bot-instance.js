@@ -55,7 +55,7 @@ function wireProjectBotHandlers(bot, projectId) {
             '2. Complete onboarding\n' +
             '3. Answer questions when a round is active\n' +
             '4. React to synthesis reports in your group\n\n' +
-            'Questions? Ask your admin or type them here.', { parse_mode: 'Markdown' });
+            'Questions? Ask your admin, or type here and I’ll help if I can.', { parse_mode: 'Markdown' });
     });
     // /restart_onboarding — safe reset for members who want to redo their profile
     bot.command('restart_onboarding', async (ctx) => {
@@ -66,7 +66,7 @@ function wireProjectBotHandlers(bot, projectId) {
             await ctx.reply('I could not find your membership for this project yet. Please use your project invite link first.');
             return;
         }
-        await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress onboarding answers for this project.');
+        await ctx.reply('🔄 Restarting onboarding. I cleared your in-progress answers for this project.');
         await handleOnboardingStep(ctx, state);
     });
     // /my_status — concise personal state for members

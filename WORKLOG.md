@@ -756,3 +756,22 @@ Next:
 
 ### Next
 - Replace placeholder CTA email once the production lead-capture destination is chosen.
+
+## 2026-04-29 07:07 Africa/Cairo — Night shift: user-facing copy polish
+
+Built:
+- Polished core Telegram copy across setup/initiation, member claim/onboarding, validation DMs, question DMs, synthesis reactions, reminders, dashboard/status/next-action text.
+- Standardized language around “perspective”, “synthesis”, “validation”, “round”, and “onboarding”.
+- Updated report reaction buttons to match product language: Aligned / Want to discuss / Disagree.
+
+Tested:
+- `npm test` — 11 files, 125 tests passing.
+- `npm run build` — TypeScript build passing.
+- Restarted Zolara via `scripts/start-zolara.sh` and verified `GET /health` returns OK.
+
+Current state:
+- Zolara server is running on port 3000 with project bot webhook router active.
+- Copy changes are ready to commit/push.
+
+Next actions:
+- Continue Phase 1 core-loop hardening: onboarding edge cases, perspective gathering, synthesis report posting/reactions.

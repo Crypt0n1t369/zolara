@@ -9,10 +9,10 @@ import { initiation } from '../../util/logger';
 async function sendGreeting(ctx: Context, state: InitiationState): Promise<void> {
   await ctx.reply(
     '🌀 *Welcome to Zolara!*\n\n' +
-    "I'll help you set up a dedicated AI assistant for your team or community.\n" +
-    "It'll learn from everyone's perspectives and help you find alignment.\n\n" +
-    "This setup takes about 5-10 minutes. I'll ask you some questions about your project.\n\n" +
-    "Ready? Let's start!",
+    "I'll help you set up a dedicated assistant for your team or community.\n" +
+    "It will gather perspectives privately, synthesize what people are saying, and help the group find alignment.\n\n" +
+    "Setup takes about 5-10 minutes. At the end, you'll have a project bot ready to invite your team.\n\n" +
+    "Ready? Let's start with the basics.",
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -45,7 +45,7 @@ async function sendProjectGoal(ctx: Context, state: InitiationState): Promise<vo
 async function sendTeamSize(ctx: Context, state: InitiationState): Promise<void> {
   await ctx.reply(
     'How many active people are involved?\n\n' +
-    'This helps me calibrate the process.',
+    'This helps me pace the process — a team of 4 works differently from a community of 50.',
     {
       reply_markup: {
         inline_keyboard: [
@@ -63,7 +63,7 @@ async function sendTeamSize(ctx: Context, state: InitiationState): Promise<void>
 
 async function sendUseCase(ctx: Context, state: InitiationState): Promise<void> {
   await ctx.reply(
-    'What best describes your context?',
+    'What best describes this project?',
     {
       reply_markup: {
         inline_keyboard: [
@@ -99,7 +99,8 @@ async function sendCycleFrequency(ctx: Context, state: InitiationState): Promise
   const rows = chunkArray(options.map(o => ({ text: o, callback_data: `init:cycle:${o.toLowerCase().replace(/\s+/g, '_')}` })), 2);
 
   await ctx.reply(
-    'How often should I check in with everyone to gather perspectives?',
+    'How often should I check in with everyone?\n\n' +
+    'I will send each person a few questions, then synthesize a report for the group.',
     { reply_markup: { inline_keyboard: rows } }
   );
 }
@@ -128,7 +129,7 @@ async function sendQuestionDepth(ctx: Context, state: InitiationState): Promise<
 async function sendAnonymity(ctx: Context, state: InitiationState): Promise<void> {
   await ctx.reply(
     'When reports are generated, should perspectives be *anonymous*?\n\n' +
-    'Anonymous input often leads to more honest responses, especially on sensitive topics.',
+    'Anonymous input often leads to more honest responses, especially on sensitive topics. Some teams prefer attribution for context.',
     {
       reply_markup: {
         inline_keyboard: [
@@ -165,8 +166,8 @@ async function sendGroupSetup(ctx: Context, state: InitiationState): Promise<voi
 
   await ctx.reply(
     'Almost done! How should the bot connect to your team?\n\n' +
-    '1️⃣ *1-on-1 chats* — I\'ll gather perspectives privately\n' +
-    '2️⃣ *Group chat* — I\'ll post reports and facilitate discussions' +
+    '1️⃣ *1-on-1 chats* — I\'ll gather perspectives privately.\n' +
+    '2️⃣ *Group chat* — I\'ll post reports and help the group discuss them.' +
     forumNote,
     {
       parse_mode: 'Markdown',
@@ -190,7 +191,7 @@ async function sendConfirmConfig(ctx: Context, state: InitiationState): Promise<
   };
 
   await ctx.reply(
-    '📋 *Your Project Configuration*\n\n' +
+    '📋 *Project setup*\n\n' +
     '```\n' +
     `Name:        ${c.name || '—'}\n` +
     `Goal:        ${c.description || '—'}\n` +
@@ -202,7 +203,7 @@ async function sendConfirmConfig(ctx: Context, state: InitiationState): Promise<
     `Actions:     ${c.actionTracking ? 'Yes' : 'No'}\n` +
     `Channels:    ${(c.telegramContexts ?? ['group']).join(', ')}\n` +
     '```\n\n' +
-    'Does everything look right?',
+    'Does this look right?',
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -266,19 +267,18 @@ async function sendBotCreation(ctx: Context, state: InitiationState): Promise<vo
     const escapedName = escapeMarkdownV2(projectName);
 
     await ctx.reply(
-      `🔗 *Your project bot is ready!*\n\n` +
-      `Share this link with your team members to join:\n\n` +
+      `🔗 *Project invite ready*\n\n` +
+      `Share this link with your team when you are ready for them to join:\n\n` +
       `[Join ${escapedName} Bot](https://t.me/${suggestedUsername}?start=claim_${projectId})\n\n` +
-      `Each member clicks the link → taps "Yes, I'm in" → that's their commitment.\n\n` +
-      `Once they've done that, I'll be able to DM them questions when rounds start.\n\n` +
-      `_Share this in your group chat so everyone can see it._`,
+      `Each member clicks the link, taps “Yes, I’m in,” and completes a short onboarding.\n\n` +
+      `After that, I can DM them questions when rounds start.\n\n` +
+      `_Share this in your group chat so everyone has the same entry point._`,
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
     initiation.botCreationFailed({ telegramId: state.telegramId, step: state.step }, err);
     await ctx.reply(
-      '⚠️ Something went wrong creating your bot. Please try again later.\n' +
-      'You can start over with /create'
+      '⚠️ I could not create the project bot right now. Please try /create again in a few minutes.'
     );
   }
 }
@@ -334,10 +334,10 @@ export async function handleCallback(
     case 'info':
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(
-        '🌀 *Zolara* helps teams find alignment through structured 1-on-1 conversations and AI synthesis.\n\n' +
-        '• Each team member answers questions privately\n' +
-        '• An AI synthesizes perspectives into a group report\n' +
-        '• The process deepens alignment over time\n\n' +
+        '🌀 *Zolara* helps teams turn scattered perspectives into clear group alignment.\n\n' +
+        '• Members answer short questions privately\n' +
+        '• Zolara writes a synthesis report for the group\n' +
+        '• Follow-up rounds help clarify tensions and decisions\n\n' +
         'Ready to set up your project?',
         {
           parse_mode: 'Markdown',

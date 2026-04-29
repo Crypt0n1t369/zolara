@@ -56,15 +56,15 @@ export function recommendAdminNextAction(args) {
         return {
             label: 'Invite the team',
             command: '/invite',
-            detail: 'No members are connected yet. Share the invite link before starting validation or rounds.',
+            detail: 'No members are connected yet. Share the invite link before starting validation or a round.',
             urgency: 'setup',
         };
     }
     if (args.pendingOnboarding > 0) {
         return {
-            label: 'Unblock onboarding',
+            label: 'Finish onboarding',
             command: '/nudge',
-            detail: `${args.pendingOnboarding} member(s) still need to finish onboarding. Send one reminder instead of manually chasing people.`,
+            detail: `${args.pendingOnboarding} member(s) still need to finish onboarding. Send one reminder instead of chasing people manually.`,
             urgency: 'action',
         };
     }
@@ -75,15 +75,15 @@ export function recommendAdminNextAction(args) {
         return {
             label: 'Refine the topic',
             command,
-            detail: 'The last validation did not reach clear majority. Refine the wording and rerun validation so the group can converge.',
+            detail: 'The last validation did not reach a clear majority. Refine the wording and rerun validation.',
             urgency: 'action',
         };
     }
     if (args.roundStatus === 'gathering' && args.missingResponses > 0) {
         return {
-            label: 'Recover missing responses',
+            label: 'Collect missing responses',
             command: '/nudge',
-            detail: `${args.missingResponses} round response(s) are missing. Send a targeted reminder to only the people blocking synthesis.`,
+            detail: `${args.missingResponses} round response(s) are missing. Send a targeted reminder to the people blocking synthesis.`,
             urgency: 'action',
         };
     }
@@ -91,7 +91,7 @@ export function recommendAdminNextAction(args) {
         return {
             label: 'Wait for validation votes',
             command: '/dashboard',
-            detail: 'Voting is still open. Check the dashboard for current vote counts before changing topic.',
+            detail: 'Voting is still open. Check the dashboard for current vote counts before changing the topic.',
             urgency: 'wait',
         };
     }
@@ -115,14 +115,14 @@ export function recommendAdminNextAction(args) {
         return {
             label: 'Start the next working round',
             command: '/startround <topic>',
-            detail: 'The latest round is complete. Start the next concrete topic when the team is ready.',
+            detail: 'The latest round is complete. Start the next clear topic when the team is ready.',
             urgency: 'action',
         };
     }
     return {
         label: 'Start the first working round',
         command: '/startround <topic>',
-        detail: 'Members are ready and no active round is running. Start with one clear decision or question.',
+        detail: 'Members are ready and no active round is running. Start with one clear decision, question, or tension.',
         urgency: 'action',
     };
 }
