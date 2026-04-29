@@ -10,49 +10,8 @@
  */
 
 import { redis } from '../src/data/redis';
-import { checkRoundDeadlines } from '../src/engine/round-manager';
-import { checkValidationDeadlines } from '../src/engine/phases/phase-2-problem-def';
 import { logger } from '../src/util/logger';
-
-const LOCK_KEY = 'lock:lifecycle-worker';
-const LOCK_TTL_SECONDS = Number(process.env.LIFECYCLE_WORKER_LOCK_TTL_SECONDS ?? 300);
-
-async function withLock<T>(fn: () => Promise<T>): Promise<T | null> {
-  const token = `${process.pid}:${Date.now()}`;
-  const acquired = await redis.set(LOCK_KEY, token, 'EX', LOCK_TTL_SECONDS, 'NX');
-  if (acquired !== 'OK') {
-    logger.info({ msg: '[LifecycleWorker] skipped: another worker holds lock', lockKey: LOCK_KEY });
-    return null;
-  }
-
-  try {
-    return await fn();
-  } finally {
-    const current = await redis.get(LOCK_KEY).catch(() => null);
-    if (current === token) {
-      await redis.del(LOCK_KEY).catch((err) => {
-        logger.warn({ msg: '[LifecycleWorker] failed to release lock', err: String(err) });
-      });
-    }
-  }
-}
-
-export async function runLifecycleWorkerOnce(): Promise<void> {
-  const startedAt = Date.now();
-  await withLock(async () => {
-    logger.info({ msg: '[LifecycleWorker] started' });
-
-    const validation = await checkValidationDeadlines();
-    const rounds = await checkRoundDeadlines();
-
-    logger.info({
-      msg: '[LifecycleWorker] finished',
-      durationMs: Date.now() - startedAt,
-      validation,
-      rounds,
-    });
-  });
-}
+import { runLifecycleWorkerOnce } from '../src/util/lifecycle-worker';
 
 async function main(): Promise<void> {
   const mode = process.argv[2] ?? 'once';

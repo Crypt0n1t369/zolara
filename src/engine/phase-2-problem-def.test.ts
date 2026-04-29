@@ -6,6 +6,10 @@
 import { describe, it, expect } from 'vitest';
 import { PHASE_PROBLEM_DEF } from './phases/flags';
 import type { ProblemDefinitionStatus, ProblemDefinitionVote } from '../data/schema/problem-definitions';
+import {
+  computeValidationOutcome,
+  shouldTallyValidationAfterVote,
+} from './phases/phase-2-problem-def';
 import { staleValidationMessage } from './phases/phase-2-problem-def/telegram-ui';
 
 describe('Phase 2 — Problem Validation Gate', () => {
@@ -65,73 +69,66 @@ describe('Phase 2 — Problem Validation Gate', () => {
   // ── Vote tallying logic ───────────────────────────────────────────────────────
 
   describe('Vote tallying contracts', () => {
-    const VOTE_SCORES = { clear: 100, refine: 0, unsure: 50 };
-    // Clear requires a strict majority; 50/50 is not enough.
-
-    function computeTally(votes: ProblemDefinitionVote[]): {
-      confidenceScore: number;
-      status: 'confirmed' | 'needs_work' | 'rejected';
-      clearRate: number;
-    } {
-      const clear = votes.filter((v) => v === 'clear').length;
-      const refine = votes.filter((v) => v === 'refine').length;
-      const unsure = votes.filter((v) => v === 'unsure').length;
-      const total = votes.length;
-
-      const totalScore = clear * VOTE_SCORES.clear + refine * VOTE_SCORES.refine + unsure * VOTE_SCORES.unsure;
-      const confidenceScore = total > 0 ? Math.round(totalScore / total) : 0;
-      const clearRate = total > 0 ? clear / total : 0;
-
-      let status: 'confirmed' | 'needs_work' | 'rejected';
-      if (clear > total / 2 && confidenceScore >= 40) {
-        status = 'confirmed';
-      } else if (refine > 0 || confidenceScore < 40) {
-        status = 'needs_work';
-      } else {
-        status = 'needs_work';
-      }
-
-      return { confidenceScore, status, clearRate };
+    function toVoteRows(votes: ProblemDefinitionVote[]) {
+      return votes.map((vote) => ({ vote }));
     }
 
     it('confirms when clear has a strict majority and confidence >= 40', () => {
-      const votes: ProblemDefinitionVote[] = ['clear', 'clear', 'clear', 'unsure'];
-      const result = computeTally(votes);
+      const result = computeValidationOutcome(toVoteRows(['clear', 'clear', 'clear', 'unsure']));
       expect(result.status).toBe('confirmed');
-      expect(result.confidenceScore).toBe(88); // (300+50)/4 = 87.5 → Math.round rounds half to even → 88
+      expect(result.confidenceScore).toBe(88); // (300+50)/4 = 87.5 → 88
     });
 
     it('needs_work when clear does not have a strict majority', () => {
-      const votes: ProblemDefinitionVote[] = ['clear', 'unsure'];
-      const result = computeTally(votes);
+      const result = computeValidationOutcome(toVoteRows(['clear', 'unsure']));
       expect(result.status).toBe('needs_work');
     });
 
     it('needs_work when refine votes prevent a clear majority', () => {
-      const votes: ProblemDefinitionVote[] = ['clear', 'refine', 'unsure'];
-      const result = computeTally(votes);
+      const result = computeValidationOutcome(toVoteRows(['clear', 'refine', 'unsure']));
       expect(result.status).toBe('needs_work');
     });
 
     it('needs_work when confidence < 40', () => {
-      const votes: ProblemDefinitionVote[] = ['unsure', 'unsure', 'refine'];
-      const result = computeTally(votes);
+      const result = computeValidationOutcome(toVoteRows(['unsure', 'unsure', 'refine']));
       expect(result.status).toBe('needs_work');
       expect(result.confidenceScore).toBe(33); // (50+50+0)/3 = 33
     });
 
-    it('rejected when no votes (edge case)', () => {
-      const result = computeTally([]);
-      expect(result.status).toBe('needs_work'); // default, not rejected
+    it('defaults no-vote edge cases to needs_work rather than rejection', () => {
+      const result = computeValidationOutcome([]);
+      expect(result.status).toBe('needs_work');
       expect(result.confidenceScore).toBe(0);
     });
 
     it('confirms on unanimous clear', () => {
-      const votes: ProblemDefinitionVote[] = ['clear', 'clear', 'clear'];
-      const result = computeTally(votes);
+      const result = computeValidationOutcome(toVoteRows(['clear', 'clear', 'clear']));
       expect(result.status).toBe('confirmed');
       expect(result.confidenceScore).toBe(100);
-      expect(result.clearRate).toBe(1);
+      expect(result.voteSummary.clear / result.voteSummary.total).toBe(1);
+    });
+
+    it('does not close early on a 50/50 split when more voters remain', () => {
+      expect(shouldTallyValidationAfterVote({
+        totalVoters: 4,
+        votesReceived: 2,
+        clearVotes: 1,
+        voteDeadline: new Date(Date.now() + 60_000),
+      })).toBe(false);
+    });
+
+    it('closes when a clear or non-clear majority is mathematically decided', () => {
+      expect(shouldTallyValidationAfterVote({ totalVoters: 5, votesReceived: 3, clearVotes: 3 })).toBe(true);
+      expect(shouldTallyValidationAfterVote({ totalVoters: 5, votesReceived: 3, clearVotes: 0 })).toBe(true);
+    });
+
+    it('closes at the deadline even without enough votes', () => {
+      expect(shouldTallyValidationAfterVote({
+        totalVoters: 5,
+        votesReceived: 1,
+        clearVotes: 1,
+        voteDeadline: new Date(Date.now() - 60_000),
+      })).toBe(true);
     });
   });
 

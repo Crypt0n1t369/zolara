@@ -42,6 +42,60 @@ const VOTE_DEADLINE_HOURS = 24; // hours to wait for votes before tallying
 // 1 clear + 1 unsure/refine is not enough.
 const LOW_CONFIDENCE_THRESHOLD = 40; // confidence score below this → flag admin
 
+export type ValidationOutcome = {
+  status: 'confirmed' | 'needs_work' | 'rejected';
+  confidenceScore: number;
+  voteSummary: {
+    clear: number;
+    refine: number;
+    unsure: number;
+    total: number;
+  };
+};
+
+export function computeValidationOutcome(votes: Array<{ vote: string }>): ValidationOutcome {
+  const voteSummary = {
+    clear: votes.filter((v) => v.vote === 'clear').length,
+    refine: votes.filter((v) => v.vote === 'refine').length,
+    unsure: votes.filter((v) => v.vote === 'unsure').length,
+    total: votes.length,
+  };
+
+  // Confidence: weighted score; clear=100, unsure=50, refine=0.
+  const totalScore = voteSummary.clear * 100 + voteSummary.unsure * 50;
+  const confidenceScore = voteSummary.total > 0
+    ? Math.round(totalScore / voteSummary.total)
+    : 0;
+
+  let status: 'confirmed' | 'needs_work' | 'rejected';
+  if (voteSummary.clear > voteSummary.total / 2 && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
+    status = 'confirmed';
+  } else {
+    // Default to clarification rather than rejection so the admin/team gets a recovery path.
+    status = 'needs_work';
+  }
+
+  return { status, confidenceScore, voteSummary };
+}
+
+export function shouldTallyValidationAfterVote(args: {
+  totalVoters: number;
+  votesReceived: number;
+  clearVotes: number;
+  voteDeadline?: Date | null;
+  now?: Date;
+}): boolean {
+  const { totalVoters, votesReceived, clearVotes, voteDeadline, now = new Date() } = args;
+  const nonClearVotes = votesReceived - clearVotes;
+
+  const deadlineReached = Boolean(voteDeadline && voteDeadline <= now);
+  const allVotesReceived = totalVoters > 0 && votesReceived >= totalVoters;
+  const clearMajorityReached = totalVoters > 0 && clearVotes > totalVoters / 2;
+  const nonClearMajorityReached = totalVoters > 0 && nonClearVotes > totalVoters / 2;
+
+  return deadlineReached || allVotesReceived || clearMajorityReached || nonClearMajorityReached;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────────
 
 export interface ValidationResult {
@@ -229,17 +283,14 @@ export async function processVote(
     .limit(1);
 
   if (existingVote.length > 0) {
-    // Update existing vote
-    await db
-      .update(problemDefinitionVotes)
-      .set({ vote, voteText: voteText ?? null, votedAt: new Date() })
-      .where(eq(problemDefinitionVotes.id, existingVote[0].id));
-  } else {
-    // Insert new vote
-    await db
-      .insert(problemDefinitionVotes)
-      .values({ problemDefinitionId, memberId, vote, voteText: voteText ?? null });
+    // Votes are intentionally locked after the first choice so old button taps
+    // or repeated callbacks cannot rewrite the validation result.
+    return { recorded: false, tallyComplete: false, result: undefined };
   }
+
+  await db
+    .insert(problemDefinitionVotes)
+    .values({ problemDefinitionId, memberId, vote, voteText: voteText ?? null });
 
   // Update votes received count
   const votes = await db
@@ -264,16 +315,15 @@ export async function processVote(
 
   const totalVoters = def.totalVoters ?? 0;
   const clearVotes = votes.filter((v) => v.vote === 'clear').length;
-  const nonClearVotes = votes.length - clearVotes;
 
   // Tally only when the outcome is decided, all eligible voters answered, or the deadline passed.
   // Do not close early on a 50/50 split — the next vote could still create a Clear majority.
-  const deadlineReached = def.voteDeadline && def.voteDeadline <= new Date();
-  const allVotesReceived = totalVoters > 0 && votes.length >= totalVoters;
-  const clearMajorityReached = totalVoters > 0 && clearVotes > totalVoters / 2;
-  const nonClearMajorityReached = totalVoters > 0 && nonClearVotes > totalVoters / 2;
-
-  if (deadlineReached || allVotesReceived || clearMajorityReached || nonClearMajorityReached) {
+  if (shouldTallyValidationAfterVote({
+    totalVoters,
+    votesReceived: votes.length,
+    clearVotes,
+    voteDeadline: def.voteDeadline,
+  })) {
     const result = await tallyVotes(problemDefinitionId);
     return { recorded: true, tallyComplete: true, result };
   }
@@ -326,32 +376,7 @@ export async function tallyVotes(problemDefinitionId: string): Promise<Validatio
     .where(eq(problemDefinitionVotes.problemDefinitionId, problemDefinitionId))
     .limit(100);
 
-  const voteSummary = {
-    clear: votes.filter((v) => v.vote === 'clear').length,
-    refine: votes.filter((v) => v.vote === 'refine').length,
-    unsure: votes.filter((v) => v.vote === 'unsure').length,
-    total: votes.length,
-  };
-
-  // Confidence: weighted score
-  // clear=100, unsure=50, refine=0
-  const totalScore =
-    voteSummary.clear * 100 + voteSummary.unsure * 50 + voteSummary.refine * 0;
-  const confidenceScore =
-    voteSummary.total > 0
-      ? Math.round(totalScore / voteSummary.total)
-      : 0;
-
-  // Determine outcome
-  let status: 'confirmed' | 'needs_work' | 'rejected';
-
-  if (voteSummary.clear > voteSummary.total / 2 && confidenceScore >= LOW_CONFIDENCE_THRESHOLD) {
-    status = 'confirmed';
-  } else if (voteSummary.refine > 0 || confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
-    status = 'needs_work';
-  } else {
-    status = 'needs_work'; // default to needing clarification
-  }
+  const { voteSummary, confidenceScore, status } = computeValidationOutcome(votes);
 
   // Update problem definition
   await db

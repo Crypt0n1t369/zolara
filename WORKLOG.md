@@ -656,3 +656,28 @@ Current state:
 
 Next:
 - Live Telegram smoke test `/next` on a project with each blocker state: no members, pending onboarding, active gathering round, and needs_work validation.
+
+## 2026-04-29 04:38 Africa/Cairo — Night shift integration test hardening
+
+Built/fixed:
+- Added practical regression coverage around recent high-risk areas:
+  - onboarding stale-button recovery and explicit prompt/context labels,
+  - validation outcome/tally timing, including no early close on 50/50 splits,
+  - dashboard/status validation-history escaping, limiting, and wait-state recommendations,
+  - lifecycle worker Redis lock behavior and deadline check ordering.
+- Extracted lifecycle worker implementation into `src/util/lifecycle-worker.ts` so the PM2/CLI wrapper stays thin and the lock/deadline orchestration is unit-testable.
+- Fixed `processVote()` to honor the intended one-vote lock: repeated direct calls no longer overwrite an existing validation vote.
+
+Tested:
+- `npm test` passes: 11 files / 125 tests.
+- `npm run build` passes.
+- `npm run lifecycle:once` runs successfully with 0 expired validations / 0 expired rounds.
+- Restarted PM2 `zolara`; health check OK at `http://127.0.0.1:3000/health`.
+- PM2 state: `zolara`, `zolara-spawner`, and `cloudflared` online; `zolara-lifecycle-worker` stopped between cron runs as expected.
+
+Current state:
+- Integration-risk behavior is covered by more focused unit tests and the runtime is healthy after restart.
+- Local `.env` remains modified by environment/tunnel management and was intentionally not committed.
+
+Next:
+- Live Telegram smoke tests for `/next`, `/nudge`, stale onboarding/validation buttons, and `/refinetopic` on real project states.

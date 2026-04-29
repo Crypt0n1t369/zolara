@@ -32,6 +32,15 @@ describe('admin dashboard helpers', () => {
             hasMembers: true,
         })).toContain('/nudge');
     });
+    it('recommends invite before any round work when the project has no members', () => {
+        const next = recommendAdminNextAction({
+            pendingOnboarding: 0,
+            missingResponses: 0,
+            hasMembers: false,
+        });
+        expect(next.command).toBe('/invite');
+        expect(next.urgency).toBe('setup');
+    });
     it('recommends a concrete admin command for each high-friction state', () => {
         expect(recommendAdminNextAction({
             pendingOnboarding: 2,
@@ -52,6 +61,20 @@ describe('admin dashboard helpers', () => {
             hasMembers: true,
         }).command).toBe('/startround <topic>');
     });
+    it('recommends wait states instead of disruptive commands during active validation/lifecycle work', () => {
+        expect(recommendAdminNextAction({
+            pendingOnboarding: 0,
+            validationStatus: 'voting',
+            missingResponses: 0,
+            hasMembers: true,
+        })).toMatchObject({ command: '/dashboard', urgency: 'wait' });
+        expect(recommendAdminNextAction({
+            pendingOnboarding: 0,
+            roundStatus: 'synthesizing',
+            missingResponses: 0,
+            hasMembers: true,
+        })).toMatchObject({ command: '/dashboard', urgency: 'wait' });
+    });
     it('formats validation history with prior attempts, vote counts, clarification, and refined topic', () => {
         const text = formatValidationHistory([
             {
@@ -69,5 +92,13 @@ describe('admin dashboard helpers', () => {
         expect(text).toContain('✅ 1 / ⚠️ 2 / ❓ 0');
         expect(text).toContain('c1');
         expect(text).toContain('refined: Clearer topic');
+    });
+    it('limits validation history and escapes HTML-sensitive topic text for status/dashboard output', () => {
+        const text = formatValidationHistory([
+            { topicText: 'A < B & C > D', status: 'voting', votesReceived: 0, totalVoters: 3, clarificationRound: 0 },
+            { topicText: 'second', status: 'needs_work', votesReceived: 2, totalVoters: 3, clarificationRound: 1 },
+        ], 1);
+        expect(text).toContain('A &lt; B &amp; C &gt; D');
+        expect(text).not.toContain('second');
     });
 });

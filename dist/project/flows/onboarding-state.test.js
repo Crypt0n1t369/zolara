@@ -62,5 +62,26 @@ describe('Onboarding state machine', () => {
         it('flags confirm when the user is no longer on review', () => {
             expect(getOnboardingCallbackStaleReason(state, 'onboard:confirm:review')).toContain('Review your answers');
         });
+        it('flags any old button after onboarding is complete', () => {
+            expect(getOnboardingCallbackStaleReason({ ...state, step: 'complete' }, 'onboard:skip:review'))
+                .toBe('Onboarding is already complete.');
+        });
+        it('flags availability/style buttons rendered for a previous prompt', () => {
+            expect(getOnboardingCallbackStaleReason(state, 'onboard:availability:availability:1-3_hrs'))
+                .toContain('Weekly availability');
+            expect(getOnboardingCallbackStaleReason({ ...state, step: 'availability' }, 'onboard:style:communication_style:quick'))
+                .toContain('Communication style');
+        });
+    });
+    describe('high-risk onboarding UX contracts', () => {
+        it('keeps review before completion in the step order so data is confirmed before final save', () => {
+            expect(nextOnboardingStep('communication_style')).toBe('review');
+            expect(nextOnboardingStep('review')).toBe('complete');
+        });
+        it('labels every user-facing prompt with a non-empty context', () => {
+            for (const step of ONBOARDING_STEP_ORDER.filter((step) => step !== 'complete')) {
+                expect(currentlyAnsweringLabel(step)).toMatch(/^Currently answering: .+/);
+            }
+        });
     });
 });
