@@ -53,7 +53,9 @@ async function checkWebhookBaseUrl(): Promise<WebhookBaseCheck | null> {
   const base = env('WEBHOOK_BASE_URL');
   if (!base) {
     fail('WEBHOOK_BASE_URL is missing');
-    action('Set WEBHOOK_BASE_URL to the stable HTTPS hostname after provisioning the named tunnel.');
+    action(hostingMode() === 'external'
+      ? 'Set WEBHOOK_BASE_URL to the external HTTPS service URL after deploying the backend (for example Render service/custom domain).'
+      : 'Set WEBHOOK_BASE_URL to the stable HTTPS hostname after provisioning the named tunnel.');
     return null;
   }
 
@@ -92,7 +94,9 @@ async function checkPublicHealth(base: string): Promise<void> {
     const response = await fetch(healthUrl, { signal: AbortSignal.timeout(8_000) });
     if (!response.ok) {
       fail(`Public /health returned HTTP ${response.status}`);
-      action('After the named tunnel is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health');
+      action(hostingMode() === 'external'
+      ? 'After the external backend is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health'
+      : 'After the named tunnel is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health');
       return;
     }
     const body = await response.json().catch(() => null) as { status?: string; service?: string } | null;
@@ -103,7 +107,9 @@ async function checkPublicHealth(base: string): Promise<void> {
     }
   } catch (err) {
     fail(`Public /health check failed: ${err instanceof Error ? err.message : String(err)}`);
-    action('After the named tunnel is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health');
+    action(hostingMode() === 'external'
+      ? 'After the external backend is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health'
+      : 'After the named tunnel is online, verify the stable URL with: curl <WEBHOOK_BASE_URL>/health');
   }
 }
 

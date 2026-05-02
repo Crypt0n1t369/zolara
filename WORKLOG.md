@@ -2370,3 +2370,19 @@ Next actions:
 **Current state**
 - Render fallback is now guarded by CI, not just documented.
 - Remaining live-readiness work still requires human account/secrets action for either Render or Cloudflare, then project-bot rehook and E2E smoke.
+
+## 2026-05-03 00:14 — External-hosting diagnostics now distinguish Render/hosted deploys
+
+**What was built**
+- Updated readiness and smoke remediation text so `ZOLARA_HOSTING_MODE=external` points operators at the external backend/Render service instead of Cloudflare named-tunnel wording.
+- Cloudflare-mode guidance is unchanged.
+
+**What was tested**
+- Ran `npm run build`; passed.
+- Ran `ZOLARA_HOSTING_MODE=external WEBHOOK_BASE_URL=https://zolara.example.com npm run readiness:check`; expected failures dropped to the external-host blockers (public `/health`, legacy incomplete row, unset project-bot webhooks), and Next actions now mention the external backend.
+- Ran `ZOLARA_HOSTING_MODE=external WEBHOOK_BASE_URL=https://zolara.example.com npm run smoke:status`; PM2 tunnel is ignored in external mode and Next actions now mention the external backend.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- Operator diagnostics now correctly support both Cloudflare and Render/external deployment paths.
+- Live readiness still requires account/secrets action for a stable external URL, then bot rehook and E2E smoke.

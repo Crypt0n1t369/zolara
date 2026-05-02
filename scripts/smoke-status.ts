@@ -388,7 +388,9 @@ async function main(): Promise<void> {
       addAction(nextActions, 'Provision a stable HTTPS hostname; random trycloudflare.com is not acceptable for testers.');
       addAction(nextActions, 'Run the stable webhook runbook: cloudflared login/create/route DNS, then `npm run tunnel:prepare-config`.');
     } else if (check.name === 'public_health') {
-      addAction(nextActions, 'After the named tunnel is online, verify `curl <WEBHOOK_BASE_URL>/health` returns status=ok.');
+      addAction(nextActions, mode === 'external'
+        ? 'After the external backend is online, verify `curl <WEBHOOK_BASE_URL>/health` returns status=ok.'
+        : 'After the named tunnel is online, verify `curl <WEBHOOK_BASE_URL>/health` returns status=ok.');
     } else if (check.name === 'pm2_runtime') {
       addAction(nextActions, 'Restart the PM2 tunnel from ecosystem-tunnel.config.cjs so runtime uses `cloudflared tunnel run zolara-prod`, not quick `--url`.');
     } else if (check.name === 'active_rows_without_bot_credentials') {
