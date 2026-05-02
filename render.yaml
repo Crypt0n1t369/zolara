@@ -1,0 +1,89 @@
+services:
+  - type: web
+    name: zolara-web
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ZOLARA_HOSTING_MODE
+        value: external
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zolara-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: zolara-redis
+          property: connectionString
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: ZOLARA_BOT_TOKEN
+        sync: false
+      - key: MANAGED_BOTS_TOKEN
+        sync: false
+      - key: MINIMAX_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+
+  - type: worker
+    name: zolara-lifecycle-worker
+    runtime: docker
+    plan: starter
+    dockerCommand: npm run lifecycle:loop
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ZOLARA_HOSTING_MODE
+        value: external
+      - key: LIFECYCLE_WORKER_INTERVAL_SECONDS
+        value: 60
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zolara-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: zolara-redis
+          property: connectionString
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: ZOLARA_BOT_TOKEN
+        sync: false
+      - key: MANAGED_BOTS_TOKEN
+        sync: false
+      - key: MINIMAX_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        fromService:
+          type: web
+          name: zolara-web
+          envVarKey: WEBHOOK_SECRET
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: zolara-web
+          envVarKey: ENCRYPTION_KEY
+
+  - type: keyvalue
+    name: zolara-redis
+    plan: starter
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: zolara-postgres
+    databaseName: zolara
+    user: zolara
+    plan: starter
+    ipAllowList: []

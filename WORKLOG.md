@@ -2330,3 +2330,25 @@ Next actions:
 **Current state**
 - If Cloudflare auth is unavailable, Render is now documented as the clean external HTTPS fallback.
 - Code/CI are healthy; runtime readiness still needs either Cloudflare named tunnel or external deploy, plus secret rotation and bot rehook.
+
+## 2026-05-02 23:14 — Added Render Blueprint for one-click external hosting
+
+**What was built**
+- Added root `render.yaml` Blueprint for the external-hosting fallback path.
+- Blueprint defines:
+  - `zolara-web` Docker web service with `/health` checks
+  - `zolara-lifecycle-worker` Docker worker running `npm run lifecycle:loop`
+  - Render Postgres database
+  - Render Key Value Redis-compatible store
+  - generated webhook/encryption secrets and dashboard-entered rotated Telegram/MiniMax/WEBHOOK_BASE_URL values
+- Updated `docs/RENDER_DEPLOY_RUNBOOK.md` with the Blueprint path before manual deploy steps.
+
+**What was tested**
+- Ran a structural smoke check over `render.yaml` for expected service/resource markers.
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run build` successfully.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- Render is no longer only documentation; the repo now includes a Blueprint starting point for external HTTPS hosting.
+- Still requires human account setup/secrets entry on Render or Cloudflare before live tester E2E.

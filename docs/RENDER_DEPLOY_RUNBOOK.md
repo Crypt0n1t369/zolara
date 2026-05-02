@@ -30,7 +30,20 @@ ZOLARA_HOSTING_MODE=external
 
 `ZOLARA_HOSTING_MODE=external` tells readiness/smoke diagnostics not to require local Cloudflare files or PM2 tunnel state. It still requires HTTPS and public `/health`.
 
-## Deploy steps
+## Blueprint deploy path
+
+A starter `render.yaml` is checked in at the repository root. It defines:
+
+- `zolara-web` Docker web service with `/health` checks.
+- `zolara-lifecycle-worker` Docker worker running `npm run lifecycle:loop` every 60 seconds.
+- `zolara-postgres` Postgres database.
+- `zolara-redis` Render Key Value instance.
+- Generated `WEBHOOK_SECRET` and `ENCRYPTION_KEY` shared from the web service to the worker.
+- Dashboard-entered secret values (`sync: false`) for Telegram/MiniMax tokens and `WEBHOOK_BASE_URL`.
+
+After creating the Blueprint in Render, fill in every `sync: false` value with rotated credentials. Set `WEBHOOK_BASE_URL` to the final Render service URL or custom domain.
+
+## Manual deploy steps
 
 1. In Render, create a new Web Service from `https://github.com/Crypt0n1t369/zolara`.
 2. Use Docker deployment. The checked `Dockerfile` builds and starts the Node/Hono app.
