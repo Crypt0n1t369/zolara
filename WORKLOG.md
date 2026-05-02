@@ -2352,3 +2352,21 @@ Next actions:
 **Current state**
 - Render is no longer only documentation; the repo now includes a Blueprint starting point for external HTTPS hosting.
 - Still requires human account setup/secrets entry on Render or Cloudflare before live tester E2E.
+
+## 2026-05-02 23:44 — Added Render Blueprint safety check to CI
+
+**What was built**
+- Added `scripts/check-render-blueprint.ts`, a lightweight deployment safety check for `render.yaml`.
+- Added npm script `deploy:render:check`.
+- Updated GitHub CI to run the Render Blueprint check before build/test.
+- The check verifies expected Render web/worker/Postgres/Redis resources, external hosting mode, lifecycle loop command, secret placeholders using `sync: false`, and absence of obvious committed token/key patterns in `render.yaml`.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- Render fallback is now guarded by CI, not just documented.
+- Remaining live-readiness work still requires human account/secrets action for either Render or Cloudflare, then project-bot rehook and E2E smoke.

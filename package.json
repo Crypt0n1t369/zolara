@@ -19,7 +19,8 @@
     "lifecycle:loop": "./scripts/container-lifecycle-loop.sh",
     "cleanup:incomplete-active-projects": "tsx scripts/archive-incomplete-active-projects.ts",
     "tunnel:prepare-config": "tsx scripts/prepare-cloudflare-tunnel-config.ts",
-    "webhooks:rehook": "./scripts/rehook-all.sh"
+    "webhooks:rehook": "./scripts/rehook-all.sh",
+    "deploy:render:check": "tsx scripts/check-render-blueprint.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
