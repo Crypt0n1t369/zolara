@@ -2300,3 +2300,17 @@ Next actions:
 **Current state**
 - Hosted GitHub repo now has a passing automated CI gate.
 - Runtime blockers remain unchanged: rotate secrets, named Cloudflare tunnel, project-bot rehook, legacy-row archive, live E2E smoke.
+
+## 2026-05-02 22:14 — CI prepped for GitHub Node 24 action runtime
+
+**What was built**
+- Updated `.github/workflows/ci.yml` with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` to opt into GitHub's upcoming Node 24 action runtime early.
+- This removes the CI deprecation risk observed on the passing GitHub runs and keeps hosted checks future-proof.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers.
+- Ran `npm run build` successfully.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- Code and hosted CI are healthy; runtime blockers remain stable Cloudflare tunnel, secret rotation, rehooking project bots, legacy-row archive, and live E2E smoke.
