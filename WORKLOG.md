@@ -2447,3 +2447,19 @@ Next actions:
 **Current state**
 - Render/Docker deploy path is safer: runtime images no longer carry dev tooling such as `drizzle-kit`/`tsx`.
 - Live readiness still waits on external hosting/account setup, rotated secrets, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 01:24 — Re-synced lockfile for npm 10 CI after Docker slimming
+
+**What was fixed**
+- Re-ran npm 10 lockfile generation after the production Docker slimming change so GitHub Actions can run `npm ci` with Vite/Vitest optional dependency entries present.
+- The previous `9499fd5` CI run failed at `npm ci` for missing optional `esbuild@0.28.0` lock entries; this update addresses that specific runner mismatch.
+
+**What was tested**
+- Ran `npx npm@10.9.7 ci`; passed.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `docker build -t zolara:test .`; passed with production runtime stage reporting 0 vulnerabilities.
+
+**Current state**
+- Docker slimming remains in place, and the lockfile is again compatible with the GitHub runner npm version.
