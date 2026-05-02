@@ -2386,3 +2386,24 @@ Next actions:
 **Current state**
 - Operator diagnostics now correctly support both Cloudflare and Render/external deployment paths.
 - Live readiness still requires account/secrets action for a stable external URL, then bot rehook and E2E smoke.
+
+## 2026-05-03 00:44 — CI now verifies production audit and Docker build
+
+**What was built**
+- Upgraded `drizzle-orm` to `0.45.2` to clear the production SQL-identifier injection advisory reported by `npm audit --omit=dev`.
+- Upgraded `drizzle-kit` to `0.31.8` to keep Drizzle tooling aligned.
+- Added `npm audit --omit=dev` to GitHub CI so future production dependency advisories fail fast.
+- Added `docker build -t zolara:test .` to GitHub CI so the Render/Docker deployment path is continuously verified.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm ci`; passed.
+- Ran `npm audit --omit=dev`; passed with 0 production vulnerabilities.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `docker build -t zolara:test .`; passed.
+
+**Current state**
+- Hosted CI now covers code, tests, Render Blueprint safety, production dependency audit, and Docker image build.
+- Live readiness still requires stable external hosting/account setup, rotated secrets, bot rehook, legacy-row cleanup approval, and E2E smoke.

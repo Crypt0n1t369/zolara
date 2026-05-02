@@ -53,6 +53,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm audit --omit=dev
       - run: npm run deploy:render:check
       - run: npm run build
       - run: npm test
+      - run: docker build -t zolara:test .
