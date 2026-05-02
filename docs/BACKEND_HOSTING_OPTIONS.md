@@ -77,8 +77,8 @@ Then on the hosting platform:
    This calls the one-shot worker every 60 seconds by default (`LIFECYCLE_WORKER_INTERVAL_SECONDS` can override it). PM2 deployments should keep using the checked-in `cron_restart` one-shot worker instead.
 7. Rehook active project bots to the stable `WEBHOOK_BASE_URL` after public `/health` passes. First run a safe dry-run:
    ```bash
-   DRY_RUN=1 WEBHOOK_BASE_URL=https://<stable-hostname> scripts/rehook-all.sh
-   WEBHOOK_BASE_URL=https://<stable-hostname> scripts/rehook-all.sh
+   DRY_RUN=1 WEBHOOK_BASE_URL=https://<stable-hostname> npm run webhooks:rehook
+   WEBHOOK_BASE_URL=https://<stable-hostname> npm run webhooks:rehook
    ```
    The script refuses random `trycloudflare.com` URLs and reserved/example hostnames by default. Active rows without project-bot credentials are skipped when they have no bot username; active rows with a bot username but missing credentials still fail the rehook.
 8. Verify:
@@ -92,5 +92,5 @@ Then on the hosting platform:
 ## Platform notes
 
 - **VPS**: easiest mental model; reuse PM2 configs and named Cloudflare/DNS or direct Nginx/Caddy TLS.
-- **Render/Railway/Fly**: good for HTTPS web process; make sure Redis/Postgres are persistent and a recurring worker can run every minute.
+- **Render/Railway/Fly**: good for HTTPS web process; make sure Redis/Postgres are persistent and a recurring worker can run every minute. Render-specific steps are in `docs/RENDER_DEPLOY_RUNBOOK.md`.
 - **GitHub Pages + backend elsewhere**: good split if landing page needs public hosting, but webhooks still need the backend host.

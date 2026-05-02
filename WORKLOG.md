@@ -2314,3 +2314,19 @@ Next actions:
 
 **Current state**
 - Code and hosted CI are healthy; runtime blockers remain stable Cloudflare tunnel, secret rotation, rehooking project bots, legacy-row archive, and live E2E smoke.
+
+## 2026-05-02 22:44 — Added Render external-hosting fallback runbook
+
+**What was built**
+- Added `docs/RENDER_DEPLOY_RUNBOOK.md` as a concrete alternative when Cloudflare account login/DNS setup is blocked.
+- The runbook covers Docker web service, Postgres, Redis, required rotated env vars, `ZOLARA_HOSTING_MODE=external`, lifecycle scheduling, health verification, bot rehook, and final smoke.
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` to link the Render runbook and use `npm run webhooks:rehook` consistently.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run build` successfully.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- If Cloudflare auth is unavailable, Render is now documented as the clean external HTTPS fallback.
+- Code/CI are healthy; runtime readiness still needs either Cloudflare named tunnel or external deploy, plus secret rotation and bot rehook.
