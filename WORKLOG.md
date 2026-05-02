@@ -2290,3 +2290,13 @@ Next actions:
 **Next actions**
 - Push CI workflow to GitHub and confirm the workflow run.
 - Complete interactive Cloudflare setup and credential rotation before testers.
+
+## 2026-05-02 21:51 — GitHub CI confirmed passing
+
+**What was tested**
+- Watched GitHub Actions run `25259211243` for commit `6101c8c`.
+- CI passed: `npm ci`, `npm run build`, and `npm test` completed successfully in GitHub with Redis/Postgres services.
+
+**Current state**
+- Hosted GitHub repo now has a passing automated CI gate.
+- Runtime blockers remain unchanged: rotate secrets, named Cloudflare tunnel, project-bot rehook, legacy-row archive, live E2E smoke.
