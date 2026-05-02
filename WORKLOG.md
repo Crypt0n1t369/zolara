@@ -2499,3 +2499,21 @@ Next actions:
 **Current state**
 - Render handoff docs now match the slim production Docker image and compiled lifecycle worker path.
 - Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 02:44 — Added first tester go-live checklist
+
+**What was built**
+- Added `docs/FIRST_TESTER_GO_LIVE_CHECKLIST.md`, a single operator checklist for the final tester-readiness handoff.
+- The checklist consolidates secret rotation, Cloudflare named tunnel path, Render Blueprint path, public `/health`, legacy-row cleanup approval, safe project-bot rehook, final diagnostics, and live Telegram E2E smoke.
+- Captured the current dry-run legacy cleanup target (`7767…37c8`, missing project-bot credentials) so approval can be explicit.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run cleanup:incomplete-active-projects`; dry-run found the known single legacy incomplete active row and made no DB changes.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `npm run deploy:render:check`; passed.
+
+**Current state**
+- Tester go-live has a concise final checklist that matches current tooling and known blockers.
+- Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
