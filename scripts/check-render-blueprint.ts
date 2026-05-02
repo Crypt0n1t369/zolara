@@ -25,6 +25,7 @@ requireIncludes('web runtime', 'runtime: docker');
 requireIncludes('health check', 'healthCheckPath: /health');
 requireIncludes('lifecycle worker', 'name: zolara-lifecycle-worker');
 requireIncludes('lifecycle loop command', 'dockerCommand: npm run lifecycle:loop');
+requireIncludes('compiled lifecycle worker command', 'value: npm run lifecycle:once:dist');
 requireIncludes('Postgres database', 'name: zolara-postgres');
 requireIncludes('Redis/Key Value service', 'name: zolara-redis');
 requireIncludes('external hosting mode', 'value: external');

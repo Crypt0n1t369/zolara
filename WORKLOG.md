@@ -2424,3 +2424,26 @@ Next actions:
 
 **Current state**
 - CI should now pass with the expanded production-audit and Docker-build gates.
+
+## 2026-05-03 01:14 — Production Docker image now omits dev dependencies
+
+**What was built**
+- Converted `Dockerfile` to a two-stage build:
+  - build stage installs all deps and compiles TypeScript
+  - runtime stage installs production deps only and copies `dist/`
+- Added compiled lifecycle worker entrypoint `src/lifecycle-worker-cli.ts` and npm script `lifecycle:once:dist`.
+- Updated container lifecycle loop to support `LIFECYCLE_WORKER_COMMAND`, while preserving the existing local default.
+- Updated Render Blueprint worker env to run `npm run lifecycle:once:dist` inside the production-only container.
+- Extended Render Blueprint check to assert the compiled lifecycle worker command is configured.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `npm audit --omit=dev`; passed with 0 production vulnerabilities.
+- Ran `docker build -t zolara:test .`; passed, with runtime stage installing 53 production packages and reporting 0 vulnerabilities.
+
+**Current state**
+- Render/Docker deploy path is safer: runtime images no longer carry dev tooling such as `drizzle-kit`/`tsx`.
+- Live readiness still waits on external hosting/account setup, rotated secrets, bot rehook, legacy-row cleanup approval, and E2E smoke.

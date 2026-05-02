@@ -47,6 +47,8 @@ services:
         value: external
       - key: LIFECYCLE_WORKER_INTERVAL_SECONDS
         value: 60
+      - key: LIFECYCLE_WORKER_COMMAND
+        value: npm run lifecycle:once:dist
       - key: DATABASE_URL
         fromDatabase:
           name: zolara-postgres

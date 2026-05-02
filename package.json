@@ -20,7 +20,8 @@
     "cleanup:incomplete-active-projects": "tsx scripts/archive-incomplete-active-projects.ts",
     "tunnel:prepare-config": "tsx scripts/prepare-cloudflare-tunnel-config.ts",
     "webhooks:rehook": "./scripts/rehook-all.sh",
-    "deploy:render:check": "tsx scripts/check-render-blueprint.ts"
+    "deploy:render:check": "tsx scripts/check-render-blueprint.ts",
+    "lifecycle:once:dist": "node dist/lifecycle-worker-cli.js once"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
