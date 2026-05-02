@@ -13,10 +13,18 @@ Before inviting testers or relying on the GitHub-hosted repository, rotate all s
 - Encryption key (`ENCRYPTION_KEY`)
 - Database/Redis credentials if they were real/shared
 
+Generate fresh local Zolara-only random values when needed:
+
+```bash
+npm run ops:generate-secrets
+```
+
+This prints new `WEBHOOK_SECRET` and `ENCRYPTION_KEY` values only. Telegram, MiniMax, database, and Redis credentials still need to be rotated in their provider dashboards.
+
 After rotation:
 
-1. Update the local `.env` on the runtime host only.
-2. Restart Zolara.
+1. Update the local `.env` on the runtime host only, or the hosting provider secret store for Render/external deploys.
+2. Restart/redeploy Zolara.
 3. Run `npm run readiness:check`.
 4. Once a stable HTTPS hostname is configured, run:
 

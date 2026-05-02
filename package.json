@@ -21,7 +21,8 @@
     "tunnel:prepare-config": "tsx scripts/prepare-cloudflare-tunnel-config.ts",
     "webhooks:rehook": "./scripts/rehook-all.sh",
     "deploy:render:check": "tsx scripts/check-render-blueprint.ts",
-    "lifecycle:once:dist": "node dist/lifecycle-worker-cli.js once"
+    "lifecycle:once:dist": "node dist/lifecycle-worker-cli.js once",
+    "ops:generate-secrets": "tsx scripts/generate-ops-secrets.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",

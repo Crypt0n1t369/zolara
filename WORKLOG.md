@@ -2463,3 +2463,21 @@ Next actions:
 
 **Current state**
 - Docker slimming remains in place, and the lockfile is again compatible with the GitHub runner npm version.
+
+## 2026-05-03 01:44 — Added safe local secret generator for rotation handoff
+
+**What was built**
+- Added `scripts/generate-ops-secrets.ts` and npm script `ops:generate-secrets`.
+- The script generates fresh `WEBHOOK_SECRET` and `ENCRYPTION_KEY` values without reading `.env` or printing existing secrets.
+- Updated `SECURITY.md` to include the generator in the post-GitHub secret-rotation workflow and clarify that Telegram/MiniMax/DB/Redis credentials still need provider-side rotation.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run ops:generate-secrets` with output redacted in logs; it produced new values as expected.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `npm run deploy:render:check`; passed.
+
+**Current state**
+- Secret rotation handoff is safer and more concrete for the Zolara-owned random values.
+- Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
