@@ -2271,3 +2271,22 @@ Next actions:
 **Next actions**
 - Rotate exposed credentials before testers.
 - Complete named Cloudflare tunnel setup, rehook project bots, then run full E2E smoke.
+
+## 2026-05-02 21:44 — Added GitHub CI for hosted repo
+
+**What was built**
+- Added `.github/workflows/ci.yml` so GitHub runs `npm ci`, `npm run build`, and `npm test` on pushes/PRs to `master`.
+- CI provisions Redis and Postgres services and uses dummy non-secret environment values required by config parsing.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers.
+- Ran `npm run build` successfully.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- GitHub hosting now has an automated build/test gate once pushed.
+- Runtime/tester blockers remain unchanged: secret rotation, named Cloudflare tunnel, rehook project bots, archive legacy row, live E2E smoke.
+
+**Next actions**
+- Push CI workflow to GitHub and confirm the workflow run.
+- Complete interactive Cloudflare setup and credential rotation before testers.

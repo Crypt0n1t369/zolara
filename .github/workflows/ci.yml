@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zolara
+          POSTGRES_PASSWORD: zolara
+          POSTGRES_DB: zolara_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zolara -d zolara_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://zolara:zolara@localhost:5432/zolara_test
+      REDIS_URL: redis://localhost:6379
+      ZOLARA_BOT_TOKEN: 0000000000:ci_dummy_token
+      MANAGED_BOTS_TOKEN: 0000000000:ci_dummy_managed_token
+      WEBHOOK_BASE_URL: https://ci.example.com
+      WEBHOOK_SECRET: ci_dummy_webhook_secret_32_chars
+      MINIMAX_API_KEY: ci_dummy_minimax_key
+      ENCRYPTION_KEY: ci_dummy_encryption_key_32_chars__
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
