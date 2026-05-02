@@ -2407,3 +2407,20 @@ Next actions:
 **Current state**
 - Hosted CI now covers code, tests, Render Blueprint safety, production dependency audit, and Docker image build.
 - Live readiness still requires stable external hosting/account setup, rotated secrets, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 00:57 — Fixed CI lockfile compatibility after Docker/audit gate
+
+**What was fixed**
+- Regenerated `package-lock.json` with npm 10 compatibility so GitHub Actions/Node 22 can run `npm ci` with Vite/Vitest optional peer dependencies present in the lockfile.
+- This fixes the first CI run after adding Docker/audit gates, which failed at `npm ci` due missing optional `esbuild@0.28.0` lock entries.
+
+**What was tested**
+- Ran `npm ci`; passed.
+- Ran `npm audit --omit=dev`; passed with 0 production vulnerabilities.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `docker build -t zolara:test .`; passed.
+
+**Current state**
+- CI should now pass with the expanded production-audit and Docker-build gates.
