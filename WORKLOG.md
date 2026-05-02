@@ -2252,3 +2252,22 @@ Next actions:
 
 **Next actions**
 - Manual Cloudflare setup, then dry-run `npm run webhooks:rehook`; only run real rehook after public `/health` passes.
+
+## 2026-05-02 21:14 — GitHub security follow-up documented
+
+**What was built**
+- Added `SECURITY.md` with an explicit secret-rotation requirement because `.env` existed in earlier Git history before the cleanup commit.
+- Documented which secrets must be rotated before testers and the safe post-rotation webhook rehook sequence.
+- Confirmed GitHub repo is public and GitHub secret scanning/push protection are enabled.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers.
+- Confirmed `.env`, `node_modules/`, and `memory/` are no longer tracked after the GitHub cleanup commit.
+
+**Current state**
+- Repo is hosted on GitHub and cleaned going forward, but real secret rotation remains mandatory before testers because old Git history was already pushed.
+- Stable HTTPS setup remains blocked on interactive Cloudflare login/create/route DNS.
+
+**Next actions**
+- Rotate exposed credentials before testers.
+- Complete named Cloudflare tunnel setup, rehook project bots, then run full E2E smoke.
