@@ -7,7 +7,7 @@ Use this if Cloudflare named-tunnel setup is blocked. Render provides the stable
 - One Docker web service running `npm start` on port `3000`.
 - One persistent Postgres database.
 - One persistent Redis instance.
-- One recurring worker/cron job that runs `npm run lifecycle:once` every minute, or an always-on worker running `npm run lifecycle:loop` if cron is unavailable.
+- One always-on worker running `npm run lifecycle:loop`. In the production Docker image this loop calls the compiled worker command `npm run lifecycle:once:dist` every 60 seconds.
 - Secret environment variables configured in Render, never committed to GitHub.
 
 ## Required environment variables
@@ -35,13 +35,21 @@ ZOLARA_HOSTING_MODE=external
 A starter `render.yaml` is checked in at the repository root. It defines:
 
 - `zolara-web` Docker web service with `/health` checks.
-- `zolara-lifecycle-worker` Docker worker running `npm run lifecycle:loop` every 60 seconds.
+- `zolara-lifecycle-worker` Docker worker running `npm run lifecycle:loop` every 60 seconds, with `LIFECYCLE_WORKER_COMMAND=npm run lifecycle:once:dist` so the production-only image does not need `tsx`.
 - `zolara-postgres` Postgres database.
 - `zolara-redis` Render Key Value instance.
 - Generated `WEBHOOK_SECRET` and `ENCRYPTION_KEY` shared from the web service to the worker.
 - Dashboard-entered secret values (`sync: false`) for Telegram/MiniMax tokens and `WEBHOOK_BASE_URL`.
 
 After creating the Blueprint in Render, fill in every `sync: false` value with rotated credentials. Set `WEBHOOK_BASE_URL` to the final Render service URL or custom domain.
+
+One-click Blueprint URL:
+
+```text
+https://dashboard.render.com/blueprint/new?repo=https://github.com/Crypt0n1t369/zolara
+```
+
+Before clicking deploy, confirm the generated services match `render.yaml` and that the `sync: false` fields are filled with rotated values.
 
 ## Manual deploy steps
 
@@ -75,9 +83,9 @@ DRY_RUN=1 WEBHOOK_BASE_URL=https://<render-service-or-custom-domain> npm run web
 WEBHOOK_BASE_URL=https://<render-service-or-custom-domain> npm run webhooks:rehook
 ```
 
-9. Configure the lifecycle schedule:
-   - Preferred: cron/recurring job every minute running `npm run lifecycle:once`.
-   - Fallback: worker process running `npm run lifecycle:loop`.
+9. Configure/verify lifecycle execution:
+   - Blueprint path: `zolara-lifecycle-worker` runs `npm run lifecycle:loop` and uses `LIFECYCLE_WORKER_COMMAND=npm run lifecycle:once:dist`.
+   - Manual path: if the platform supports cron, run `npm run lifecycle:once:dist` every minute; otherwise run `npm run lifecycle:loop` as an always-on worker.
 
 10. Final smoke:
 

@@ -2481,3 +2481,21 @@ Next actions:
 **Current state**
 - Secret rotation handoff is safer and more concrete for the Zolara-owned random values.
 - Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 02:14 — Render runbook aligned with production Docker worker
+
+**What was built**
+- Updated `docs/RENDER_DEPLOY_RUNBOOK.md` to match the current production Docker/runtime design.
+- Documented that the Render worker runs `npm run lifecycle:loop` with `LIFECYCLE_WORKER_COMMAND=npm run lifecycle:once:dist`, so runtime images do not need `tsx` or dev dependencies.
+- Added the one-click Render Blueprint URL for the repo and explicit reminder to fill `sync: false` fields with rotated credentials before deploy.
+- Clarified manual lifecycle scheduling for compiled production workers.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run deploy:render:check`; passed.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+
+**Current state**
+- Render handoff docs now match the slim production Docker image and compiled lifecycle worker path.
+- Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
