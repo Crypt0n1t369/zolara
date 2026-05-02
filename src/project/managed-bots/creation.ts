@@ -143,16 +143,33 @@ export async function finalizeProjectBot(
     throw new Error('Admin not found for telegram ID: ' + adminTelegramId);
   }
 
-  // Find the most recent pending project for this admin
+  // Idempotency: Telegram can retry managed_bot_created/my_chat_member updates.
+  // If this bot is already attached to one of this admin's projects, return success
+  // without fetching/storing a fresh token or spawning duplicate setup work.
+  const [existingProject] = await db
+    .select({ id: projects.id, botUsername: projects.botUsername, status: projects.status })
+    .from(projects)
+    .where(and(eq(projects.adminId, admin.id), eq(projects.botTelegramId, botUserId)))
+    .limit(1);
+
+  if (existingProject) {
+    return {
+      projectId: existingProject.id,
+      botUsername: existingProject.botUsername ?? suggestedUsername ?? 'unknown',
+    };
+  }
+
+  // Find the most recent pending project for this admin.
+  // Do not let a newer active/archived project mask an older pending project.
   const pendingProjects = await db
     .select()
     .from(projects)
-    .where(eq(projects.adminId, admin.id))
+    .where(and(eq(projects.adminId, admin.id), eq(projects.status, 'pending')))
     .orderBy(desc(projects.createdAt))
     .limit(1);
 
   const project = pendingProjects[0];
-  if (!project || project.status !== 'pending') {
+  if (!project) {
     throw new Error('No pending project found for admin');
   }
 

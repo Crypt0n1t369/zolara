@@ -81,6 +81,23 @@ export interface ProjectConfig {
   timezone: string;
 }
 
+export const pendingWebProfiles = pgTable('pending_web_profiles', {
+  id: serial('id').primaryKey(),
+  email: text('email').notNull(),
+  telegramUsername: text('telegram_username').notNull(),
+  telegramUsernameNormalized: text('telegram_username_normalized').notNull(),
+  role: text('role').notNull().default('lead'), // 'lead' | 'member'
+  status: text('status').notNull().default('pending'), // pending | linked | cancelled
+  telegramId: bigint('telegram_id', { mode: 'number' }),
+  source: text('source').default('landing_page'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp('created_at').defaultNow(),
+  linkedAt: timestamp('linked_at'),
+}, (table) => ({
+  usernameStatusIdx: index('pending_web_profiles_username_status_idx').on(table.telegramUsernameNormalized, table.status),
+  linkedTelegramIdx: index('pending_web_profiles_telegram_id_idx').on(table.telegramId),
+}));
+
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   telegramId: bigint('telegram_id', { mode: 'number' }).unique().notNull(),
@@ -203,7 +220,7 @@ export const actionItems = pgTable('action_items', {
 
 export const engagementEvents = pgTable('engagement_events', {
   id: serial('id').primaryKey(),
-  memberId: serial('member_id').references(() => members.id),
+  memberId: integer('member_id').references(() => members.id),
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
   eventType: text('event_type').notNull(),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),

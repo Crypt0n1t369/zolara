@@ -51,6 +51,12 @@ export function formatValidationHistory(attempts, max = 5) {
         return 'No validation attempts yet.';
     return attempts.slice(0, max).map((attempt, index) => formatValidationAttemptLine(attempt, index)).join('\n');
 }
+export function formatReportReactionSummary(counts) {
+    if (!counts || counts.total === 0)
+        return 'No report reactions yet.';
+    const convergence = Math.round(((counts.aligned * 1) + (counts.discuss * 0.5)) / counts.total * 100);
+    return `✅ ${counts.aligned} aligned · 💬 ${counts.discuss} discuss · ❌ ${counts.disagree} disagree · 📌 ${counts.saveActions} saved actions · convergence ${convergence}%`;
+}
 export function recommendAdminNextAction(args) {
     if (!args.hasMembers) {
         return {
@@ -109,6 +115,22 @@ export function recommendAdminNextAction(args) {
             command: '/dashboard',
             detail: 'Zolara is synthesizing responses. Check again shortly for the report state.',
             urgency: 'wait',
+        };
+    }
+    if (args.roundStatus === 'failed') {
+        return {
+            label: 'Restart the round with a clearer topic',
+            command: '/startround <topic>',
+            detail: 'The latest round failed before a report was posted. Start a fresh round with one explicit objective instead of waiting.',
+            urgency: 'action',
+        };
+    }
+    if (args.roundStatus === 'cancelled') {
+        return {
+            label: 'Start a replacement round',
+            command: '/startround <topic>',
+            detail: 'The latest round was cancelled. Start a new clear topic when the team is ready.',
+            urgency: 'action',
         };
     }
     if (args.roundStatus === 'complete') {

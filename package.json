@@ -13,10 +13,15 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "lifecycle:once": "tsx scripts/lifecycle-worker.ts once"
+    "lifecycle:once": "tsx scripts/lifecycle-worker.ts once",
+    "readiness:check": "tsx scripts/check-tester-readiness.ts",
+    "smoke:status": "tsx scripts/smoke-status.ts",
+    "lifecycle:loop": "./scripts/container-lifecycle-loop.sh",
+    "cleanup:incomplete-active-projects": "tsx scripts/archive-incomplete-active-projects.ts",
+    "tunnel:prepare-config": "tsx scripts/prepare-cloudflare-tunnel-config.ts",
+    "webhooks:rehook": "./scripts/rehook-all.sh"
   },
   "dependencies": {
-    "self-healing-agent": "file:../self-healing-agent/dist",
     "@hono/node-server": "^1.13.8",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.39.1",

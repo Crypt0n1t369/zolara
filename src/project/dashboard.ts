@@ -24,6 +24,14 @@ export type ValidationVoteCounts = {
   unsure: number;
 };
 
+export type ReportReactionCounts = {
+  aligned: number;
+  discuss: number;
+  disagree: number;
+  saveActions: number;
+  total: number;
+};
+
 export type DashboardValidationAttempt = {
   topicText: string;
   refinedText?: string | null;
@@ -95,6 +103,13 @@ export function formatValidationAttemptLine(attempt: DashboardValidationAttempt,
 export function formatValidationHistory(attempts: DashboardValidationAttempt[], max = 5): string {
   if (attempts.length === 0) return 'No validation attempts yet.';
   return attempts.slice(0, max).map((attempt, index) => formatValidationAttemptLine(attempt, index)).join('\n');
+}
+
+export function formatReportReactionSummary(counts: ReportReactionCounts | null): string {
+  if (!counts || counts.total === 0) return 'No report reactions yet.';
+
+  const convergence = Math.round(((counts.aligned * 1) + (counts.discuss * 0.5)) / counts.total * 100);
+  return `✅ ${counts.aligned} aligned · 💬 ${counts.discuss} discuss · ❌ ${counts.disagree} disagree · 📌 ${counts.saveActions} saved actions · convergence ${convergence}%`;
 }
 
 export type AdminNextActionArgs = {
@@ -177,6 +192,24 @@ export function recommendAdminNextAction(args: AdminNextActionArgs): AdminNextAc
       command: '/dashboard',
       detail: 'Zolara is synthesizing responses. Check again shortly for the report state.',
       urgency: 'wait',
+    };
+  }
+
+  if (args.roundStatus === 'failed') {
+    return {
+      label: 'Restart the round with a clearer topic',
+      command: '/startround <topic>',
+      detail: 'The latest round failed before a report was posted. Start a fresh round with one explicit objective instead of waiting.',
+      urgency: 'action',
+    };
+  }
+
+  if (args.roundStatus === 'cancelled') {
+    return {
+      label: 'Start a replacement round',
+      command: '/startround <topic>',
+      detail: 'The latest round was cancelled. Start a new clear topic when the team is ready.',
+      urgency: 'action',
     };
   }
 

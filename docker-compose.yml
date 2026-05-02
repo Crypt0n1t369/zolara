@@ -47,10 +47,10 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://zolara:zolara_dev_pass@postgres:5432/zolara_dev
       REDIS_URL: redis://redis:6379
-      MANAGER_BOT_TOKEN: ${MANAGER_BOT_TOKEN}
+      ZOLARA_BOT_TOKEN: ${ZOLARA_BOT_TOKEN}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-http://localhost:3000}
-      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-zolara_dev_secret_change_in_prod}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-zolara_dev_secret_change_in_prod_32_chars}
+      MANAGED_BOTS_TOKEN: ${MANAGED_BOTS_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       MINIMAX_GROUP_ID: ${MINIMAX_GROUP_ID:-}

@@ -22,6 +22,10 @@ export function landingPageHtml(): string {
     .cta { display:flex; gap:12px; flex-wrap:wrap; margin-top:28px; align-items:center; }
     .button { display:inline-block; padding:13px 18px; border-radius:999px; text-decoration:none; font-weight:800; border:1px solid var(--line); color:var(--ink); }
     .button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+    form { margin-top:24px; display:grid; gap:12px; max-width:520px; }
+    input, select { width:100%; padding:13px 14px; border:1px solid var(--line); border-radius:14px; font:inherit; }
+    label { font-weight:800; color:#374151; }
+    .field-note { font-size:.85rem; color:var(--muted); margin-top:-6px; }
     .micro { font-size:.9rem; color:var(--muted); margin-top:10px; }
     .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:18px; margin-top:28px; }
     .card { background:var(--wash); border:1px solid var(--line); border-radius:22px; padding:22px; }
@@ -43,7 +47,7 @@ export function landingPageHtml(): string {
     <h1>Stop running your community on whoever showed up.</h1>
     <p class="lede">Zolara runs private Telegram listening rounds and synthesizes what your whole community actually thinks — before backlash, burnout, or another meeting dominated by the usual voices.</p>
     <div class="cta">
-      <a class="button primary" href="mailto:hello@zolara.local?subject=Run%20a%20private%20alignment%20round">Run a private alignment round</a>
+      <a class="button primary" href="#connect">Connect Telegram</a>
       <a class="button" href="#workflow">See the Telegram workflow</a>
     </div>
     <div class="micro">No new app for members. No public confrontation. No 90-minute meeting required.</div>
@@ -90,10 +94,16 @@ export function landingPageHtml(): string {
     <details><summary>Does AI make the decision?</summary><p>No. Zolara structures signal so humans can decide better. Leadership and the community still make the call.</p></details>
   </section>
 
-  <section>
-    <h2>Tell us what decision your group is stuck on.</h2>
-    <p>If your process is town halls, Telegram polls, DMs, spreadsheets, and organizer intuition, Zolara can run the listening round before the next conflict becomes public.</p>
-    <div class="cta"><a class="button primary" href="mailto:hello@zolara.local?subject=Run%20a%20private%20alignment%20round">Run a private alignment round</a><a class="button" href="#workflow">See the workflow</a></div>
+  <section id="connect">
+    <h2>Connect your Telegram account.</h2>
+    <p>Tell Zolara your email and Telegram username. Then open <strong>@Zolara_bot</strong> and send <strong>hi</strong>. Telegram requires you to message the bot first; after that Zolara can bind this profile to your stable Telegram ID.</p>
+    <form method="post" action="/intake">
+      <label>Email<input name="email" type="email" autocomplete="email" required placeholder="you@example.org" /></label>
+      <label>Telegram username<input name="telegramUsername" autocomplete="username" required placeholder="@yourusername" /></label>
+      <label>Role<select name="role"><option value="lead">I’m setting up a project</option><option value="member">I’m joining a project</option></select></label>
+      <button class="button primary" type="submit">Save profile and open Telegram</button>
+      <div class="field-note">Usernames can change; this is only a temporary lookup until you message the bot.</div>
+    </form>
   </section>
 
   <footer>Copy source: <code>docs/landing-page.md</code></footer>

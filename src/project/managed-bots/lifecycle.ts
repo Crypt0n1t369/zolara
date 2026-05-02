@@ -9,6 +9,7 @@
 export {
   type ManagedBotInfo,
   type WebhookResult,
+  PROJECT_BOT_ALLOWED_UPDATES,
   getManagedBotToken,
   setManagedBotWebhook,
   deleteManagedBotWebhook,

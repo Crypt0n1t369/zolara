@@ -20,7 +20,8 @@ async function main(): Promise<void> {
     throw new Error(`Unsupported lifecycle-worker mode: ${mode}`);
   }
 
-  await runLifecycleWorkerOnce();
+  const summary = await runLifecycleWorkerOnce();
+  console.log(`[LifecycleWorker] summary ${JSON.stringify(summary)}`);
   await redis.quit();
   // postgres-js keeps an idle pool alive; PM2 cron expects this one-shot to exit.
   process.exit(0);

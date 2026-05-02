@@ -12,6 +12,16 @@ import { config } from '../config';
 
 const TG_API = `https://api.telegram.org/bot${config.MANAGED_BOTS_TOKEN}`;
 
+export const PROJECT_BOT_ALLOWED_UPDATES = [
+  'message',
+  'callback_query',
+  'my_chat_member',
+  'chat_member',
+  'poll_answer',
+  'message_reaction',
+  'message_reaction_count',
+] as const;
+
 export interface ManagedBotInfo {
   userId: number;
   username: string | null;
@@ -22,6 +32,12 @@ export interface ManagedBotInfo {
 
 export interface WebhookResult {
   success: boolean;
+  description?: string;
+}
+
+export interface ChatInviteLinkResult {
+  success: boolean;
+  inviteLink?: string;
   description?: string;
 }
 
@@ -63,15 +79,7 @@ export async function setManagedBotWebhook(
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secretToken,
-      allowed_updates: [
-        'message',
-        'callback_query',
-        'my_chat_member',
-        'chat_member',
-        'poll_answer',
-        'message_reaction',
-        'message_reaction_count',
-      ],
+      allowed_updates: PROJECT_BOT_ALLOWED_UPDATES,
     }),
   });
 
@@ -172,6 +180,38 @@ export function buildCreationLink(
   const safeName = botName.trim().slice(0, 64) || 'Zolara Project';
   const encodedName = encodeURIComponent(safeName);
   return `https://t.me/newbot/${managerUsername}/${suggestedUsername}?name=${encodedName}`;
+}
+
+/**
+ * Create a Telegram group/supergroup invite link using a project bot.
+ * The bot must already be in the chat and have invite-link permission.
+ */
+export async function createChatInviteLink(
+  botToken: string,
+  chatId: number,
+  name = 'Zolara team invite'
+): Promise<ChatInviteLinkResult> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/createChatInviteLink`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      name: name.slice(0, 32),
+      creates_join_request: false,
+    }),
+  });
+
+  const data = await response.json() as {
+    ok: boolean;
+    result?: { invite_link?: string };
+    description?: string;
+  };
+
+  if (!data.ok || !data.result?.invite_link) {
+    return { success: false, description: data.description ?? 'Unknown error' };
+  }
+
+  return { success: true, inviteLink: data.result.invite_link };
 }
 
 /**

@@ -23,7 +23,7 @@ import { config } from '../config';
 import { llm } from '../engine/llm/minimax';
 import { redis } from '../data/redis';
 import { db } from '../data/db';
-import { projects, admins, members, rounds, questions, responses, users, problemDefinitions, problemDefinitionVotes } from '../data/schema/projects';
+import { projects, admins, members, rounds, questions, responses, users, problemDefinitions, problemDefinitionVotes, engagementEvents, pendingWebProfiles } from '../data/schema/projects';
 import { eq, desc, and, ne, or, isNull } from 'drizzle-orm';
 import { logger, warn, round as roundLog, db as dbLog } from '../util/logger';
 import { triggerRound, cancelRound } from '../engine/round-manager';
@@ -75,12 +75,14 @@ import {
   dashboardNextAction,
   escapeHtml,
   formatOnboardingBreakdown,
+  formatReportReactionSummary,
   formatValidationHistory,
   missingResponses as calculateMissingResponses,
   pickCurrentRound,
   recommendAdminNextAction,
   summarizeOnboarding,
 } from './dashboard';
+import { isValidReportReaction } from './report-reactions';
 
 // ── Bot ───────────────────────────────────────────────────────────────────────
 
@@ -101,11 +103,65 @@ async function clearInitState(telegramId: number): Promise<void> {
   await redis.del(`init:${telegramId}`);
 }
 
+function normalizeTelegramUsername(value?: string | null): string | null {
+  const normalized = value?.trim().replace(/^@+/, '').toLowerCase();
+  return normalized || null;
+}
+
+type WebProfileRole = 'lead' | 'member';
+
+function coerceWebProfileRole(value: string | null | undefined): WebProfileRole | null {
+  if (value === 'lead' || value === 'member') return value;
+  return null;
+}
+
+async function loadLinkedWebProfileRole(telegramId: number): Promise<WebProfileRole | null> {
+  const [linked] = await db
+    .select({ role: pendingWebProfiles.role })
+    .from(pendingWebProfiles)
+    .where(and(
+      eq(pendingWebProfiles.telegramId, telegramId),
+      eq(pendingWebProfiles.status, 'linked')
+    ))
+    .orderBy(desc(pendingWebProfiles.linkedAt))
+    .limit(1);
+
+  return coerceWebProfileRole(linked?.role);
+}
+
+async function bindPendingWebProfile(ctx: any): Promise<WebProfileRole | null> {
+  const normalized = normalizeTelegramUsername(ctx.from?.username);
+  const telegramId = ctx.from?.id;
+  if (!telegramId) return null;
+  if (!normalized) return loadLinkedWebProfileRole(telegramId);
+
+  const [pending] = await db
+    .select({ id: pendingWebProfiles.id, role: pendingWebProfiles.role })
+    .from(pendingWebProfiles)
+    .where(and(
+      eq(pendingWebProfiles.telegramUsernameNormalized, normalized),
+      eq(pendingWebProfiles.status, 'pending')
+    ))
+    .limit(1);
+
+  if (!pending) return loadLinkedWebProfileRole(telegramId);
+
+  const role = coerceWebProfileRole(pending.role);
+  await db.update(pendingWebProfiles).set({
+    status: 'linked',
+    telegramId,
+    linkedAt: new Date(),
+    metadata: { linkedVia: '@Zolara_bot', role: pending.role },
+  }).where(eq(pendingWebProfiles.id, pending.id));
+  return role;
+}
+
 // ── Commands: Admin ───────────────────────────────────────────────────────────
 
 zolaraBot.command('start', async (ctx) => {
   const args = (ctx.match as string) || '';
   const userId = ctx.from!.id;
+  const webProfileRole = await bindPendingWebProfile(ctx);
 
   // Pattern: /start claim_xxx → member commitment gate
   if (args.startsWith('claim_')) {
@@ -144,6 +200,28 @@ zolaraBot.command('start', async (ctx) => {
       }
       return;
     }
+  }
+
+  if (webProfileRole === 'member') {
+    await ctx.reply(
+      '✅ Your web profile is connected to Telegram.\n\n' +
+      'To join a specific project, open that project bot invite from your lead, or search for the project bot and send “hi” there.\n\n' +
+      'If you do not have the project bot link yet, ask your lead to run /invite.'
+    );
+    return;
+  }
+
+  if (webProfileRole === 'lead') {
+    const state: InitiationState = {
+      step: 'greeting',
+      config: {},
+      telegramId: userId,
+      createdAt: new Date().toISOString(),
+    };
+    await saveInitState(state);
+    await ctx.reply('✅ Your web profile is connected. Let’s set up your Zolara project.');
+    await handleInitiationStep(ctx, state);
+    return;
   }
 
   await ctx.reply(
@@ -580,20 +658,45 @@ zolaraBot.command('invite', async (ctx) => {
 
   // Look up the project to get the actual bot username
   const [proj] = await db
-    .select({ name: projects.name, botUsername: projects.botUsername })
+    .select({
+      name: projects.name,
+      botUsername: projects.botUsername,
+      botTokenEncrypted: projects.botTokenEncrypted,
+      groupIds: projects.groupIds,
+    })
     .from(projects)
     .where(eq(projects.id, project.id))
     .limit(1);
 
   const botUsername = proj?.botUsername ?? 'Zolara_bot';
-  const inviteLink = `https://t.me/${botUsername}?start=claim_${project.id}`;
+  const memberInviteLink = `https://t.me/${botUsername}?start=claim_${project.id}`;
+
+  let groupInviteLine = '';
+  const groupId = proj?.groupIds?.[0];
+  if (groupId && proj?.botTokenEncrypted) {
+    try {
+      const { decrypt } = await import('../util/crypto');
+      const { createChatInviteLink } = await import('../telegram/managed-bots-api');
+      const botToken = decrypt(proj.botTokenEncrypted);
+      const result = await createChatInviteLink(botToken, groupId, `${project.name} testers`);
+      if (result.success && result.inviteLink) {
+        groupInviteLine = `\n\nGroup invite link:\n${escapeHtml(result.inviteLink)}`;
+      } else {
+        groupInviteLine = `\n\nGroup invite link: not available yet. Add @${escapeHtml(botUsername)} as a group admin with invite-link permission, then run /invite again.`;
+      }
+    } catch {
+      groupInviteLine = `\n\nGroup invite link: not available yet. Add @${escapeHtml(botUsername)} as a group admin with invite-link permission, then run /invite again.`;
+    }
+  } else {
+    groupInviteLine = `\n\nGroup invite link: add @${escapeHtml(botUsername)} to your Telegram group as an admin, then run /invite again.`;
+  }
 
   await ctx.reply(
-    `*${project.name} - Invite Link*\n\n` +
-    `Share this with your team:\n\n` +
-    `${inviteLink}\n\n` +
-    `Members tap “Yes, I’m in,” finish onboarding, and receive questions here.`,
-    { parse_mode: 'Markdown' }
+    `<b>${escapeHtml(project.name)} - Invite Links</b>\n\n` +
+    `Member onboarding link:\n${escapeHtml(memberInviteLink)}` +
+    groupInviteLine +
+    `\n\nMembers tap the onboarding link, confirm “Yes, I’m in,” finish onboarding, and receive questions here.`,
+    { parse_mode: 'HTML' }
   );
 });
 
@@ -772,6 +875,17 @@ zolaraBot.command('status', async (ctx) => {
 });
 
 
+async function loadReportReactionSummary(projectId: string, roundNumber: number) {
+  const rows = await db
+    .select({ memberId: engagementEvents.memberId, metadata: engagementEvents.metadata, createdAt: engagementEvents.createdAt })
+    .from(engagementEvents)
+    .where(and(eq(engagementEvents.projectId, projectId), eq(engagementEvents.eventType, 'report_reaction')))
+    .limit(500);
+
+  const { summarizeLatestReportReactions } = await import('./report-reactions');
+  return summarizeLatestReportReactions(rows, roundNumber);
+}
+
 async function loadAdminActionContext(projectId: string) {
   const memberRows = await db
     .select({ id: members.id, onboardingStatus: members.onboardingStatus, role: members.role })
@@ -798,15 +912,18 @@ async function loadAdminActionContext(projectId: string) {
 
   const latestRound = pickCurrentRound(recentRounds);
   const missingResponses = calculateMissingResponses(latestRound, onboarding.complete);
+  const reactionSummary = latestRound?.roundNumber
+    ? await loadReportReactionSummary(projectId, latestRound.roundNumber)
+    : null;
 
-  return { memberRows, onboarding, validationHistory, latestValidation, recentRounds, latestRound, missingResponses };
+  return { memberRows, onboarding, validationHistory, latestValidation, recentRounds, latestRound, missingResponses, reactionSummary };
 }
 
 zolaraBot.command('dashboard', async (ctx) => {
   const { project } = await resolveAdminProject(ctx.from!.id);
   if (!project) { await ctx.reply("You don't have any projects yet."); return; }
 
-  const { onboarding, validationHistory, latestValidation, latestRound, missingResponses } = await loadAdminActionContext(project.id);
+  const { onboarding, validationHistory, latestValidation, latestRound, missingResponses, reactionSummary } = await loadAdminActionContext(project.id);
   const onboardingBreakdown = formatOnboardingBreakdown(onboarding);
   const responseCount = latestRound?.responseCount ?? 0;
   const roundMemberCount = latestRound?.memberCount ?? onboarding.complete;
@@ -820,6 +937,7 @@ zolaraBot.command('dashboard', async (ctx) => {
   });
 
   const validationText = formatValidationHistory(validationHistory, 5);
+  const reactionText = formatReportReactionSummary(reactionSummary);
 
   const roundLabel = latestRound && ['scheduled', 'gathering', 'synthesizing'].includes(latestRound.status ?? '')
     ? 'Current active/scheduled round'
@@ -855,6 +973,10 @@ ${validationText}
 ` +
     `<b>Latest round</b>
 ${roundText}
+
+` +
+    `<b>Report reactions</b>
+${escapeHtml(reactionText)}
 
 ` +
     `<b>Recommended next action</b>
@@ -1067,7 +1189,10 @@ zolaraBot.on('callback_query:data', async (ctx) => {
   // Report reaction callbacks (group members reacting to synthesis)
   if (data.startsWith('reaction:')) {
     const [, projectId, roundNumber, reaction] = data.split(':') as [string, string, string, string];
-    await answerCb(ctx, 'Done');
+    if (!projectId || !Number.isFinite(Number.parseInt(roundNumber, 10)) || !isValidReportReaction(reaction)) {
+      await answerCb(ctx, 'This report reaction is stale.', true);
+      return;
+    }
     // Store reaction in DB
     try {
       const { engagementEvents } = await import('../data/schema/projects');
@@ -1083,19 +1208,23 @@ zolaraBot.on('callback_query:data', async (ctx) => {
         .where(and(eq(users.telegramId, userId), eq(members.projectId, projectId as any)))
         .limit(1);
 
-      if (memberRow) {
-        await db.insert(engagementEvents).values({
-          memberId: memberRow.memberId,
-          projectId,
-          eventType: 'report_reaction',
-          metadata: {
-            roundNumber: parseInt(roundNumber, 10),
-            reaction,
-            chatId: ctx.chat?.id,
-            messageId: ctx.callbackQuery.message?.message_id,
-          } as Record<string, unknown>,
-        });
+      if (!memberRow) {
+        await answerCb(ctx, 'Open the project bot invite first so I can connect your reaction.', true);
+        return;
       }
+
+      await db.insert(engagementEvents).values({
+        memberId: memberRow.memberId,
+        projectId,
+        eventType: 'report_reaction',
+        metadata: {
+          roundNumber: parseInt(roundNumber, 10),
+          reaction,
+          chatId: ctx.chat?.id,
+          messageId: ctx.callbackQuery.message?.message_id,
+        } as Record<string, unknown>,
+      });
+      await answerCb(ctx, 'Reaction saved.');
     } catch (err) {
       console.error('[Reaction] Failed to store reaction:', err);
     }
@@ -1402,8 +1531,48 @@ zolaraBot.on('my_chat_member', async (ctx) => {
 
 
 // ── Managed Bot Created (via deep link) ─────────────────────────────────────
-// Telegram sends a message with managed_bot_created: true when user approves
-// the bot creation in the BotFather UI
+// Telegram can send either:
+// - a top-level managed_bot update, or
+// - a Message.managed_bot_created service message
+// when the user approves bot creation in the BotFather UI.
+
+zolaraBot.on('managed_bot', async (ctx) => {
+  const managed = (ctx.update as any).managed_bot;
+  const botUser = managed?.bot;
+  if (!botUser?.is_bot) return;
+
+  const adminTelegramId = managed?.user?.id ?? (ctx as any).from?.id;
+  if (!adminTelegramId) {
+    console.error('[Zolara] Managed bot update missing creator user; cannot finalize project bot');
+    return;
+  }
+
+  console.log(`[Zolara] Managed bot update: @${botUser.username} (ID: ${botUser.id}) by admin ${adminTelegramId}`);
+
+  try {
+    const { finalizeProjectBot } = await import('./managed-bots/creation');
+    const { botUsername, projectId } = await finalizeProjectBot(adminTelegramId, botUser.id, botUser.username);
+
+    const [proj] = await db.select({ name: projects.name }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    const projectName = proj?.name ?? 'your project';
+
+    await ctx.api.sendMessage(
+      adminTelegramId,
+      `🎉 Your project bot is live!\n\n` +
+      `Meet @${botUsername} — the dedicated bot for ${projectName}.\n\n` +
+      `Next steps:\n` +
+      `1️⃣ Add @${botUsername} to your project's group chat\n` +
+      `2️⃣ I'll automatically detect the group and set it as the report destination\n` +
+      `3️⃣ Share this invite link with your team members:\n` +
+      `👉 https://t.me/${botUsername}?start=claim_${projectId}\n\n` +
+      `⏳ Your team coordinator is being set up now — this takes up to 60 seconds.\n` +
+      `Run /startround when your team is ready!`
+    );
+  } catch (err) {
+    console.error('[Zolara] Failed to finalize managed_bot update:', err);
+    await ctx.api.sendMessage(adminTelegramId, '⚠️ Bot created but setup failed. Contact support.');
+  }
+});
 
 zolaraBot.on('message:managed_bot_created', async (ctx) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1465,6 +1634,7 @@ zolaraBot.on('message:text', async (ctx) => {
   }
 
   const userId = ctx.from!.id;
+  const webProfileRole = await bindPendingWebProfile(ctx);
 
   // Private DM: handle initiation flow text input
   const initState = await loadInitState(userId);
@@ -1500,10 +1670,74 @@ zolaraBot.on('message:text', async (ctx) => {
     return;
   }
 
+  // Project lead/member first-message router: in private chat, make "hi" useful.
+  if (ctx.chat?.type === 'private') {
+    const routed = await handleLeadFirstMessage(ctx, userId, text, webProfileRole);
+    if (routed) return;
+  }
+
   // AI help for non-command messages (interpret natural language)
   console.log('[MessageText] userId=', userId, 'text=', text.substring(0, 100));
   await handleAIHelp(ctx, userId, text);
 });
+
+// ── First-message routing ─────────────────────────────────────────────────────
+
+function isSimpleLeadStartMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.length > 80) return false;
+  return /^(hi|hello|hey|yo|start|begin|create|create project|new project|setup|set up|i want to start|i want to create)[!. ]*$/.test(normalized);
+}
+
+async function handleLeadFirstMessage(ctx: any, userId: number, text: string, webProfileRole: WebProfileRole | null): Promise<boolean> {
+  const { project } = await resolveAdminProject(userId);
+
+  if (project) {
+    const { onboarding, validationHistory, latestValidation, latestRound, missingResponses } = await loadAdminActionContext(project.id);
+    const nextAction = dashboardNextAction({
+      pendingOnboarding: onboarding.pending,
+      validationStatus: latestValidation?.status,
+      roundStatus: latestRound?.status,
+      missingResponses,
+      hasMembers: onboarding.total > 0,
+      suggestedRefinedTopic: latestValidation?.refinedText,
+    });
+
+    await ctx.reply(
+      `<b>Welcome back to ${escapeHtml(project.name)}</b>\n\n` +
+      `${escapeHtml(nextAction)}\n\n` +
+      `Use /dashboard for details, /invite for invite links, or /projects to switch projects.`,
+      { parse_mode: 'HTML' }
+    );
+    return true;
+  }
+
+  if (webProfileRole === 'member') {
+    await ctx.reply(
+      '✅ Your web profile is connected to Telegram.\n\n' +
+      'To join a project, open the project bot invite from your lead. If you found the project bot by search, send “hi” to that project bot and I’ll start onboarding there.\n\n' +
+      'If you do not have the link yet, ask your lead to run /invite.'
+    );
+    return true;
+  }
+
+  if (!isSimpleLeadStartMessage(text) && webProfileRole !== 'lead') return false;
+
+  const state: InitiationState = {
+    step: 'greeting',
+    config: {},
+    telegramId: userId,
+    createdAt: new Date().toISOString(),
+  };
+  await saveInitState(state);
+  await ctx.reply(
+    '👋 Welcome — I can help you set up a Zolara project bot for your team.\n\n' +
+    'I’ll ask a few setup questions, then guide you through creating the project bot.'
+  );
+  await handleInitiationStep(ctx, state);
+  return true;
+}
 
 // ── Member Claim Flow ──────────────────────────────────────────────────────────
 

@@ -6,6 +6,7 @@ import { redis } from '../data/redis';
 import { checkRoundDeadlines } from '../engine/round-manager';
 import { checkValidationDeadlines } from '../engine/phases/phase-2-problem-def';
 import { logger } from './logger';
+import { auditEvent } from './audit';
 export const LOCK_KEY = 'lock:lifecycle-worker';
 const LOCK_TTL_SECONDS = Number(process.env.LIFECYCLE_WORKER_LOCK_TTL_SECONDS ?? 300);
 export async function withLifecycleWorkerLock(fn) {
@@ -27,17 +28,57 @@ export async function withLifecycleWorkerLock(fn) {
         }
     }
 }
+const emptySummary = { checked: 0, expired: 0, processed: 0, failed: 0 };
+function combineSummaries(validation, rounds) {
+    return {
+        checked: validation.checked + rounds.checked,
+        expired: validation.expired + rounds.expired,
+        processed: validation.processed + rounds.processed,
+        failed: validation.failed + rounds.failed,
+    };
+}
 export async function runLifecycleWorkerOnce() {
     const startedAt = Date.now();
-    await withLifecycleWorkerLock(async () => {
+    const result = await withLifecycleWorkerLock(async () => {
         logger.info({ msg: '[LifecycleWorker] started' });
         const validation = await checkValidationDeadlines();
         const rounds = await checkRoundDeadlines();
-        logger.info({
-            msg: '[LifecycleWorker] finished',
+        const summary = {
+            locked: false,
             durationMs: Date.now() - startedAt,
             validation,
             rounds,
+            totals: combineSummaries(validation, rounds),
+        };
+        logger.info({
+            msg: '[LifecycleWorker] finished',
+            ...summary,
         });
+        await auditEvent('lifecycle_worker_summary', {
+            locked: summary.locked,
+            durationMs: summary.durationMs,
+            validation: summary.validation,
+            rounds: summary.rounds,
+            totals: summary.totals,
+        });
+        return summary;
     });
+    if (result)
+        return result;
+    const lockedSummary = {
+        locked: true,
+        durationMs: Date.now() - startedAt,
+        validation: emptySummary,
+        rounds: emptySummary,
+        totals: emptySummary,
+    };
+    logger.info({ msg: '[LifecycleWorker] summary', ...lockedSummary });
+    await auditEvent('lifecycle_worker_summary', {
+        locked: lockedSummary.locked,
+        durationMs: lockedSummary.durationMs,
+        validation: lockedSummary.validation,
+        rounds: lockedSummary.rounds,
+        totals: lockedSummary.totals,
+    });
+    return lockedSummary;
 }

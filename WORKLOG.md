@@ -854,3 +854,1401 @@ Next actions:
 1. Commit and push this final WORKLOG update.
 2. Run live Telegram E2E smoke on active test project.
 3. Re-test coordinator spawning once OpenClaw gateway load is normal.
+
+## 2026-05-01 17:37 — Tester readiness research + security prep
+
+**What was built/prepared**
+- Researched official Telegram Bot API, Cloudflare Tunnel, and PM2 docs for tester-readiness hardening.
+- Added `docs/TESTER_READINESS_SECURITY_PLAN.md` with security invariants, implementation workflow, and first-tester checklist.
+- Confirmed recurring OpenClaw cron is scheduled every 30 minutes to continue tester-readiness work.
+
+**What was tested**
+- Ran full Vitest suite: 12 test files passed, 129 tests passed.
+
+**Current state**
+- Ready to receive feature inputs from Kristaps and implement them against the security checklist.
+- Known highest-priority infrastructure requirement remains stable `WEBHOOK_BASE_URL` via fixed Cloudflare hostname before broad tester rollout.
+
+**Next actions**
+- When feature inputs arrive: implement smallest safe slice, add/adjust tests, run targeted/full checks, update this worklog.
+
+## 2026-05-01 18:04 — Group invite readiness improvement
+
+**What was built**
+- Added a Telegram `createChatInviteLink` wrapper in `src/telegram/managed-bots-api.ts`.
+- Updated admin `/invite` to show both:
+  - Project member onboarding link (`https://t.me/<bot>?start=claim_<projectId>`)
+  - Telegram group invite link when the project bot is already in the group and has invite-link admin permission.
+- If the bot lacks group/admin context, `/invite` now tells the admin exactly what to do: add the project bot to the group as admin with invite-link permission, then rerun `/invite`.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+
+**Current state**
+- Telegram still cannot let bots create groups automatically, but Zolara can now generate a group invite link once the human-created group is connected and permissions are correct.
+
+**Next actions**
+- Live-test `/invite` after adding a project bot to a group as admin.
+- Add dashboard/report reaction summaries or admin DM fallback next, unless Kristaps gives a higher-priority feature.
+
+**Additional check**
+- Ran `npx vitest run src/project/managed-bots/lifecycle.test.ts src/manager/managed-bots/lifecycle.test.ts`: 2 files passed, 16 tests passed.
+
+## 2026-05-01 18:34 — Dashboard report reaction summary
+
+**What was built**
+- Added dashboard helper `formatReportReactionSummary()` with lightweight convergence calculation from report reactions.
+- Updated admin `/dashboard` to show latest-round report reaction summary from `engagementEvents` (`report_reaction` metadata by round number): aligned, discuss, disagree, saved actions, and convergence percentage.
+- Kept the summary read-only and privacy-safe: it only aggregates reaction counts, no raw member response content.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/dashboard.test.ts`: 1 file passed, 9 tests passed.
+
+**Current state**
+- Report reactions are now visible in the admin dashboard after report buttons are used.
+- Reaction storage still allows multiple clicks/events per member; future hardening should upsert latest reaction per member/round if exact voting semantics matter.
+
+**Next actions**
+- Add admin DM fallback for report posting when no group destination is configured.
+- Continue live E2E smoke once stable webhook hostname is available.
+
+## 2026-05-01 18:42 — Project start-flow audit and cron alignment
+
+**What was built/prepared**
+- Audited Kristaps' desired lead/member/group/ongoing Zolara flow against the current codebase.
+- Added `docs/PROJECT_START_FLOW_AUDIT.md` with:
+  - clarified lead flow
+  - clarified member flow
+  - group setup flow
+  - ongoing main-chat/private-chat loop
+  - logic gaps
+  - current implementation audit
+  - phased transformation roadmap
+- Updated `docs/TESTER_READINESS_SECURITY_PLAN.md` so the existing 30-minute tester-readiness cron follows this roadmap.
+
+**Scheduling decision**
+- Did not create a new competing cron.
+- Existing OpenClaw readiness cron remains the product-readiness driver.
+- PM2 lifecycle worker remains separate and only handles round/deadline execution.
+
+**Key audit conclusions**
+- Telegram bots cannot message users first; web whitelist must bind only after user opens/messages the bot.
+- Telegram username is mutable; stable identity must become Telegram user ID after first contact.
+- Current system supports `/create`, managed bots, deep-link member claim, onboarding, rounds, synthesis, reports, and reactions.
+- Missing pieces: web profile/whitelist, lead/member first-message routers for plain “hi”, group setup assistant, group intro, report DM fallback, richer ongoing loop exports.
+
+**What was tested**
+- Documentation/planning change only; no code test required.
+
+**Next actions**
+- Next readiness implementation slice: project bot unknown-user first-message onboarding from plain “hi”.
+
+## 2026-05-01 19:04 — Project bot plain-hi member join path
+
+**What was built**
+- Updated project bot first-message handling so an unknown user who searches for `@[project]_bot` and sends plain text like “hi” is offered the project join/commitment gate instead of falling into generic AI help.
+- Updated the non-member plain `/start` path to start the same claim flow as `/start claim_<projectId>` while still showing the direct invite link for later.
+- Kept existing behavior for known members: they can still use AI fallback/free chat when no onboarding, claim, or active question is pending.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/flows/onboarding-state.test.ts`: 1 file passed, 13 tests passed.
+
+**Current state**
+- Member entry is now more forgiving: direct link, `/start`, or plain “hi” to a project bot can begin joining/onboarding.
+
+**Next actions**
+- Add lead-side first-message router for whitelisted/project-owning users on `@Zolara_bot`.
+- Add web profile/whitelist storage model after routing behavior is stable.
+
+## 2026-05-01 19:34 — Lead-side first-message router
+
+**What was built**
+- Added a private-DM first-message router for `@Zolara_bot`.
+- Known project leads/admins who send plain text now get a concise “welcome back” response with the recommended next action plus `/dashboard`, `/invite`, and `/projects` pointers instead of generic AI help.
+- New users who send a simple greeting/start/create intent (`hi`, `hello`, `start`, `create project`, etc.) now enter the `/create` initiation wizard without needing to know the command.
+- Longer non-command questions still route to AI help, preserving conversational support.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/dashboard.test.ts src/manager/flows/initiation-state.test.ts`: 2 files passed, 14 tests passed.
+
+**Current state**
+- Lead entry is more forgiving: `/create` still works, and simple “hi” can start setup.
+- Full web whitelist/profile binding is still pending; this router is the safe pre-whitelist foundation.
+
+**Next actions**
+- Add web intake/profile storage for email + Telegram username + lead/member role.
+- Bind pending web profile to Telegram user ID when the user first messages the bot.
+
+## 2026-05-01 20:04 — Web intake pending-profile foundation
+
+**What was built**
+- Added `pending_web_profiles` schema and migration SQL for lightweight web intake:
+  - email
+  - Telegram username + normalized username
+  - role (`lead` or `member`)
+  - pending/linked status
+  - Telegram ID binding after first bot contact
+- Added a landing-page intake form that explains the key Telegram constraint: users must open `@Zolara_bot` and send `hi` before Zolara can bind/contact them.
+- Added `/intake` POST endpoint to validate and store/update a pending profile without logging secrets.
+- Added `@Zolara_bot` binding helper: on `/start` or private text message, a pending web profile matching the sender’s current Telegram username is marked `linked` and bound to stable Telegram `from.id`.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+
+**Current state**
+- The web → Telegram identity handoff now has a storage model and first-contact binding path.
+- This does not yet use role-specific post-bind routing beyond the existing first-message router; lead/member-specific behavior can build on the linked profile next.
+
+**Next actions**
+- Use linked `pending_web_profiles.role` in first-message routing:
+  - linked lead → start/continue project setup
+  - linked member → direct them to project bot/invite claim once project association exists
+- Add admin-visible intake list or manual approval if tester safety requires it.
+
+## 2026-05-01 20:34 — Role-aware web profile routing
+
+**What was built**
+- Made pending web profile binding return the linked role (`lead` or `member`) instead of silently updating state only.
+- Added lookup for already-linked web profiles by stable Telegram ID so routing still works after the initial bind message.
+- Updated `@Zolara_bot` `/start` routing:
+  - linked lead → starts the project setup/initiation wizard
+  - linked member → confirms Telegram connection and tells them to use the project bot invite/search path
+- Updated private text first-message routing:
+  - linked lead can enter setup from plain text even if they do not know `/create`
+  - linked member no longer gets accidentally routed into project creation from “hi”; they get member-specific project bot instructions instead
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+
+**Current state**
+- Web intake now has a safer role-aware Telegram handoff: lead and member entry no longer collapse into the same `/create` path.
+- Member web profiles still need a project association model before Zolara can send them directly to one specific project bot.
+
+**Next actions**
+- Add optional project association to web/member intake or admin-managed pending invites.
+- Add group setup assistant / one-time group intro after member handoff is stable.
+
+## 2026-05-01 21:04 — Project bot group setup intro
+
+**What was built**
+- Added project-bot `my_chat_member` handling for when the dedicated `@[project]_bot` is added to a group/supergroup.
+- The project bot now records the group ID on the project as a report destination.
+- Added a one-time group orientation post that explains:
+  - members onboard privately
+  - the lead starts rounds
+  - questions happen in private DM
+  - synthesis/report/reaction loop posts back to the group
+  - members join via the invite link from `/invite`
+- Added idempotency via `projects.config.groupIntroPostedGroupIds` so the intro does not spam repeatedly if Telegram sends repeated membership updates.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+
+**Current state**
+- The project bot can now self-orient a Telegram group when added, which closes part of the group setup assistant gap.
+- Live Telegram validation still needed: add a project bot to a test group and confirm group ID recording + one-time intro.
+
+**Next actions**
+- Add group permission/invite-link check messaging after group attach.
+- Add admin/member DM group-invite distribution once invite-link creation is verified live.
+
+## 2026-05-01 21:34 — Group invite permission check + member DM distribution
+
+**What was built**
+- Extended project-bot group attach handling to immediately try `createChatInviteLink` from the project bot.
+- Group intro now shows either:
+  - the ready group invite link, or
+  - clear admin instruction to grant invite-link permission and rerun `/invite`.
+- Added idempotent invite distribution tracking via `projects.config.groupInviteDistributedGroupIds`.
+- When invite-link creation succeeds, the project bot DMs the group invite to onboarded members (`onboardingStatus = complete`) who have already opened the project bot.
+- Posts a small group confirmation with the number of onboarded members notified.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+
+**Current state**
+- Group setup now covers: detect group → store destination → one-time intro → permission check → invite link → DM onboarded members when possible.
+- Live Telegram validation is still required because invite-link permission behavior depends on actual group admin rights.
+
+**Next actions**
+- Run live Telegram group attach smoke with a test project bot as admin and non-admin.
+- Add admin DM fallback for report posting when no group destination is configured.
+
+## 2026-05-01 22:04 — Admin DM fallback for report posting
+
+**What was built**
+- Added report posting fallback in the round lifecycle manager.
+- If a round completes and no Telegram group is configured, Zolara now sends a condensed synthesis report to the project owner/admin DM via `@Zolara_bot`.
+- If posting to the configured group fails, Zolara now logs the group send failure and sends the same condensed fallback report to the owner/admin DM.
+- Added `report_admin_dm_fallback` audit event with reason, response/member counts, round number, and send result.
+- Fallback report includes convergence, themes, common ground, tensions, action items, and setup instructions to add the project bot to a group and run `/invite`.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Attempted `npx vitest run src/engine/round-manager.test.ts`; no such test file exists, so Vitest exited with “No test files found.”
+- Ran targeted available tests: `npx vitest run src/engine/synthesis/pipeline.test.ts src/project/managed-bots/lifecycle.test.ts`: 2 files passed, 16 tests passed.
+
+**Current state**
+- First-test report delivery is safer: synthesis is not silently stranded when group setup is missing or broken.
+- Live Telegram smoke still needed to verify actual DM fallback delivery.
+
+**Next actions**
+- Run live E2E smoke: create/start round with no group and confirm admin receives fallback synthesis DM.
+- Run group attach smoke as admin/non-admin to verify invite-link permission messaging.
+
+## 2026-05-01 22:34 — Stable webhook preflight check
+
+**What was built**
+- Added `scripts/check-tester-readiness.ts`, a safe preflight that checks first-tester infrastructure without printing secrets.
+- Added `npm run readiness:check` script.
+- Updated `docs/TESTER_READINESS_SECURITY_PLAN.md` so P0 readiness starts with this preflight.
+- Preflight verifies:
+  - required secret/config variables are present
+  - `WEBHOOK_BASE_URL` is valid HTTPS
+  - `WEBHOOK_BASE_URL` is not random `trycloudflare.com`
+  - public `/health` responds
+  - PM2 lifecycle worker has every-minute `cron_restart`
+  - PM2 lifecycle worker is one-shot via `autorestart: false`
+
+**What was tested**
+- Ran `npm run readiness:check`; it executed successfully and found real blockers:
+  - `WEBHOOK_BASE_URL` currently uses random `trycloudflare.com`
+  - public `/health` fetch failed through that URL
+- Ran `npx tsc --noEmit` successfully after the preflight command.
+
+**Current state**
+- Tester readiness now has an automated gate for the highest-priority stable webhook/runbook risk.
+- External tester rollout remains blocked until a named Cloudflare Tunnel/stable hostname is configured and `/health` passes publicly.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/fixed hostname, update `WEBHOOK_BASE_URL`, restart server, re-register active bot webhooks, rerun `npm run readiness:check`.
+- After preflight passes, run live Telegram E2E smoke.
+
+## 2026-05-01 23:04 — Stable webhook runbook + rehook safety guard
+
+**What was built**
+- Added `docs/STABLE_WEBHOOK_RUNBOOK.md` with the concrete named Cloudflare Tunnel setup and verification path:
+  - `cloudflared tunnel login`
+  - create named tunnel
+  - route DNS
+  - configure `~/.cloudflared/config.yml`
+  - update `WEBHOOK_BASE_URL`
+  - restart server
+  - rehook active project bots
+  - rerun readiness preflight and live Telegram smoke
+- Hardened `scripts/rehook-all.sh`:
+  - accepts explicit `WEBHOOK_BASE_URL=... scripts/rehook-all.sh`
+  - refuses to re-register active tester/prod webhooks to random `trycloudflare.com`
+  - refuses non-HTTPS webhook bases
+  - points operators to the stable webhook runbook
+- Linked the runbook and rehook guard note from `docs/TESTER_READINESS_SECURITY_PLAN.md`.
+
+**What was tested**
+- Ran `bash -n scripts/rehook-all.sh` successfully.
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npm run readiness:check`; it still correctly reports the existing blockers:
+  - random `trycloudflare.com` webhook URL
+  - public `/health` fetch failed
+
+**Current state**
+- We now have both an automated preflight and an operational runbook for resolving the stable webhook blocker.
+- The rehook script can no longer accidentally point tester/prod managed bots at ephemeral tunnel URLs.
+
+**Next actions**
+- Configure the named Cloudflare Tunnel/fixed hostname manually, then rerun `npm run readiness:check`.
+- Once preflight passes, run live Telegram E2E smoke.
+
+## 2026-05-01 23:34 — Startup guard against ephemeral webhook downgrade
+
+**What was built**
+- Hardened `scripts/start-zolara.sh` so it no longer silently overwrites a stable `WEBHOOK_BASE_URL` with a random `trycloudflare.com` tunnel URL.
+- Ephemeral trycloudflare startup remains possible for local development, but now requires explicit `ALLOW_EPHEMERAL_TUNNEL=1` when replacing stable config.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` with the startup guard behavior.
+
+**What was tested**
+- Ran `bash -n scripts/start-zolara.sh scripts/rehook-all.sh` successfully.
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npm run readiness:check`; it still correctly reports the current blockers:
+  - random `trycloudflare.com` webhook URL
+  - public `/health` fetch failed
+
+**Current state**
+- The startup path is safer for testers: once a named tunnel/stable hostname is configured, the boot script should not accidentally downgrade it to an ephemeral tunnel.
+- Stable webhook infrastructure is still the active external-test blocker.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/fixed hostname, update `.env`, restart, rerun `npm run readiness:check`.
+- Then run live Telegram E2E smoke.
+
+## 2026-05-02 00:04 — Managed bot finalization idempotency hardening
+
+**What was built**
+- Hardened project managed-bot finalization against duplicate Telegram updates.
+- If Telegram retries `managed_bot_created` / `my_chat_member` for a bot that is already attached to one of the admin’s projects, finalization now returns success without:
+  - fetching a fresh managed bot token
+  - generating a new webhook secret
+  - re-encrypting/re-hashing the token
+  - spawning duplicate setup work
+- Pending project lookup now explicitly filters `status = pending`, so a newer active/archived project cannot mask an older pending project awaiting bot activation.
+- Mirrored the same idempotency/status filter hardening in the manager compatibility module.
+- Manager compatibility finalization now also fails loudly if Telegram rejects `setWebhook`, matching the project module behavior.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/managed-bots/lifecycle.test.ts src/manager/managed-bots/lifecycle.test.ts`: 2 files passed, 16 tests passed.
+
+**Current state**
+- Managed bot activation is safer under duplicate/retried Telegram creation updates.
+- Stable webhook hostname remains the external tester blocker before live E2E smoke.
+
+**Next actions**
+- Configure stable Cloudflare hostname and rerun `npm run readiness:check`.
+- After preflight passes, live-test managed bot creation exactly-once behavior and full round/report flow.
+
+## 2026-05-02 00:34 — Lifecycle worker result summary
+
+**What was built**
+- Added a structured `LifecycleWorkerSummary` return value from `runLifecycleWorkerOnce()`.
+- Summary now includes:
+  - lock state (`locked`)
+  - duration
+  - validation deadline counts
+  - round deadline counts
+  - total checked/expired/processed/failed counts
+- CLI lifecycle worker now prints a single JSON summary line after each run, making PM2/cron logs easier to inspect.
+- Lock-skip runs now also return/log a zero-count summary instead of only an informational skip message.
+- Updated lifecycle worker tests to assert successful-run totals and lock-skip summaries.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/lifecycle-worker.test.ts`: 1 file passed, 3 tests passed.
+
+**Current state**
+- Lifecycle scheduling verification is easier: PM2 logs now show whether the worker processed, skipped due to lock, failed, and how long it took.
+- Stable webhook hostname remains the blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Configure stable webhook hostname and rerun readiness preflight.
+- After preflight passes, use lifecycle worker summary logs during live E2E smoke to confirm deadline processing.
+
+## 2026-05-02 00:34 — Startup webhook rehook safety
+
+**What was built**
+- Hardened server startup webhook re-registration for active project bots.
+- Startup now refuses to auto-rehook project bots unless `WEBHOOK_BASE_URL` is HTTPS.
+- Startup now refuses random `*.trycloudflare.com` webhook bases unless `ALLOW_EPHEMERAL_TUNNEL=1` is explicitly set for local/dev use.
+- Startup now checks the `setWebhook` result and logs a real failure if Telegram rejects the webhook instead of counting it as successful.
+- Cleaned log wording from `rehack` to `rehook` for clarity.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npm run readiness:check`; it still correctly fails on the current infrastructure blockers:
+  - random `trycloudflare.com` webhook base
+  - public `/health` fetch failure
+
+**Current state**
+- A server restart can no longer silently point active project bots back to an ephemeral Cloudflare URL in tester mode.
+- Stable named Cloudflare Tunnel/stable hostname remains the blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Configure stable webhook hostname, update `WEBHOOK_BASE_URL`, restart, rehook, and rerun readiness check.
+- Live-test managed bot creation and group/report flow once preflight passes.
+
+## 2026-05-02 01:04 — Live smoke status helper
+
+**What was built**
+- Added `scripts/smoke-status.ts`, a safe redacted diagnostic helper for the first-tester E2E path.
+- Added `npm run smoke:status`.
+- The helper checks and prints:
+  - HTTPS/stable webhook host status
+  - public `/health` status
+  - recent project activation state
+  - member onboarding/opened-bot counts
+  - recent round statuses/errors
+  - report posting presence
+  - active project-bot webhook host, pending updates, and last Telegram webhook error
+- The helper intentionally does not print bot tokens, encrypted token blobs, webhook secrets, raw `.env`, or full UUIDs.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` to use `npm run smoke:status` before and after manual live Telegram smoke.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npm run smoke:status`; it executed and found the current expected blockers:
+  - webhook host is still random `trycloudflare.com`
+  - public `/health` fetch failed
+- The status helper also confirmed one recent active project exists and its Telegram webhook currently points at the configured base host, with zero pending updates and no last webhook error.
+
+**Current state**
+- The E2E smoke path now has a repeatable, safe baseline/status command to inspect readiness before and after live Telegram actions.
+- External tester rollout remains blocked by stable named Cloudflare hostname and public health failure.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/stable hostname, rerun `npm run readiness:check`, then `npm run smoke:status`.
+- After both pass, run the manual Telegram E2E path and use `npm run smoke:status` to verify reports/round transitions.
+
+## 2026-05-02 01:34 — Report reaction latest-vote semantics
+
+**What was built**
+- Added `src/project/report-reactions.ts` with `summarizeLatestReportReactions()`.
+- Dashboard reaction summary now counts only each member’s latest valid reaction for a report round instead of counting every button tap.
+- Preserved immutable `engagementEvents` audit trail while making the admin-visible summary behave like current vote state.
+- Fixed project-bot reaction storage to include `roundNumber`, matching manager-bot reaction metadata and enabling dashboard summaries for project-bot-originated report buttons.
+- Added stale/invalid round-number guard for project-bot reaction callbacks.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/report-reactions.test.ts src/project/dashboard.test.ts`: 2 files passed, 10 tests passed.
+
+**Current state**
+- Report reaction summaries are safer for first testers: repeated taps no longer inflate convergence/disagreement counts.
+- Stable named Cloudflare hostname remains the blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Configure stable webhook hostname and rerun `npm run readiness:check` + `npm run smoke:status`.
+- During live smoke, click multiple report reaction buttons as one member and verify `/dashboard` shows only the latest reaction.
+
+## 2026-05-02 01:55 — Individual discovery scale plan
+
+**What was planned**
+- Added `docs/INDIVIDUAL_DISCOVERY_SCALE_PLAN.md` in response to Kristaps' question about making individual discovery work at scale.
+- The plan aligns individual discovery with the current tester-readiness roadmap instead of replacing it.
+- It defines the core product principle: Zolara should maintain a living, correctable individual model grounded in declared data, observed behavior, current context, and explicit correction.
+
+**Key decisions**
+- Start with existing storage (`users.communicationProfile`, `members.projectProfile`, `responses`, `engagementEvents`) instead of a major schema redesign tonight.
+- Build privacy/consent first: `/me`, remember/refine/forget controls, private-by-default signals.
+- Keep initial extraction deterministic/lightweight; defer LLM-heavy profiling and embeddings until stable E2E smoke is proven.
+- Use confirmed individual signals lightly for prompt personalization without biasing group synthesis or exposing private profiles to admins.
+
+**Tonight implementation slices proposed**
+1. Project-bot `/me` profile view using existing onboarding/profile data.
+2. Post-answer private reflection MVP.
+3. Store confirmed signals in `users.communicationProfile` with scope/confidence/source.
+4. Lightly personalize question delivery from confirmed signals.
+5. Add pure-helper tests and update runbook.
+
+**Current state**
+- Planning/doc change only; no code changed for individual discovery yet.
+- Stable named Cloudflare hostname remains the tester-readiness infrastructure blocker.
+
+**Next actions**
+- Implement `/me` and confirmed-signal helpers as the first low-risk individual discovery slice, unless stable webhook work becomes immediately available.
+
+## 2026-05-02 02:04 — Individual discovery `/me` profile MVP
+
+**What was built**
+- Added `src/project/individual-profile.ts` with a private profile formatter for the individual discovery layer.
+- Added project-bot `/me` command in private DM.
+- `/me` shows:
+  - project name, role, onboarding status, active question state
+  - onboarding profile from `members.projectProfile`
+  - confirmed personal signals from `users.communicationProfile.individualDiscovery.confirmedSignals`
+  - latest round status/topic/response progress
+  - privacy note that this view is private and group reports use aggregate/anonymized patterns
+- Updated project-bot `/help` to mention `/me`.
+- No schema changes: this uses existing `members.projectProfile` and `users.communicationProfile` as planned.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/individual-profile.test.ts src/project/report-reactions.test.ts`: 2 files passed, 3 tests passed.
+
+**Current state**
+- The first individual discovery slice is now implemented: members can inspect what Zolara knows privately before any deeper reflection/memory features are added.
+- Stable named Cloudflare hostname remains the tester-readiness infrastructure blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Add post-answer private reflection MVP with Accurate / Refine / Don’t remember buttons.
+- Store confirmed reflection signals in `users.communicationProfile.individualDiscovery.confirmedSignals` with private scope.
+- Live-test `/me` after stable webhook/preflight is available.
+
+## 2026-05-02 02:34 — Post-answer private reflection MVP
+
+**What was built**
+- Added deterministic individual-discovery reflection helpers in `src/project/individual-profile.ts`:
+  - simple signal extraction from answer text
+  - reflection prompt formatting
+  - confirmed-signal merge/dedupe into `users.communicationProfile.individualDiscovery.confirmedSignals`
+- After a member answers an active round question, the project bot now optionally sends a private reflection prompt like: “I’m noticing this answer may emphasize clarity. Is that accurate?”
+- Added reflection buttons:
+  - `✅ Accurate — remember privately`
+  - `✏️ Not quite`
+  - `🚫 Don’t remember`
+- Confirmed reflections are stored privately in `users.communicationProfile` with high confidence, project scope, source, and timestamp.
+- Confirmation also writes an `individual_signal_confirmed` engagement event for auditability without exposing raw private answer text.
+- `/me` will now surface confirmed private signals.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/individual-profile.test.ts src/project/report-reactions.test.ts`: 2 files passed, 5 tests passed.
+
+**Current state**
+- Individual discovery now has a minimal trust loop: answer → private hypothesis → user confirms/skips → confirmed signal appears in `/me`.
+- Refinement by text is intentionally deferred; the `Not quite` button currently avoids storing the signal and explains that refinement is next.
+- Stable named Cloudflare hostname remains the tester-readiness infrastructure blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Add text-based refinement state for post-answer reflections.
+- Lightly personalize question delivery from confirmed private signals.
+- Live-test `/me` + reflection confirmation once stable webhook/preflight is available.
+
+## 2026-05-02 03:04 — Light question personalization from confirmed signals
+
+**What was built**
+- Added individual-discovery helpers to choose a confirmed private signal for question personalization.
+- `sendQuestionDM()` now loads the member’s `users.communicationProfile` and, when available, adds a short private note before the question.
+- Personalization is deliberately light and optional: it says the confirmed lens may be useful and explicitly tells the member they can ignore it if it does not fit the current question.
+- Only high-confidence, private, project-scoped confirmed signals are eligible.
+- If profile lookup fails, Zolara logs the issue and still sends the unpersonalized question.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/individual-profile.test.ts`: 1 file passed, 5 tests passed.
+
+**Current state**
+- Individual discovery loop now covers: `/me` profile view → post-answer reflection → private confirmation storage → light future-question personalization.
+- Stable named Cloudflare hostname remains the tester-readiness blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Add text-based refinement for the `Not quite` reflection button.
+- Live-test the personalized question copy once stable webhook/preflight is available.
+
+## 2026-05-02 03:34 — Reflection refinement text flow
+
+**What was built**
+- Added text-based refinement for the individual-discovery `✏️ Not quite` button.
+- When a member taps `Not quite`, Zolara now stores a short-lived Redis refinement state and asks them to reply with the better word/phrase or `skip`.
+- The next private text reply is captured before AI fallback/question handling and saved as a refined private confirmed signal.
+- Refined signals are stored in `users.communicationProfile.individualDiscovery.confirmedSignals` with source `post_answer_reflection_refined`.
+- Added `individual_signal_refined` engagement audit event without raw answer content.
+- Added normalization helper for safe short refinement labels.
+- Cleaned up a duplicate `return` in the answer/reflection flow.
+
+**What was tested**
+- Ran `npx tsc --noEmit` successfully.
+- Ran `npx vitest run src/project/individual-profile.test.ts`: 1 file passed, 6 tests passed.
+
+**Current state**
+- Individual discovery loop now supports correction, not just confirmation: answer → reflection → accurate/skip/refine → private profile update.
+- Stable named Cloudflare hostname remains the tester-readiness blocker before live Telegram E2E smoke.
+
+**Next actions**
+- Add `/me` controls to forget confirmed signals.
+- Live-test the full individual discovery path once stable webhook/preflight is available.
+
+## 2026-05-02 04:10 — Managed bot update handler + readiness check
+
+**What was built**
+- Added a top-level `managed_bot` update handler in `src/project/index.ts` for the current Zolara control bot path.
+- The new handler finalizes project bot setup through the existing idempotent `finalizeProjectBot()` path, stores/activates the project, sets the webhook/commands, and sends the admin the same next-step invite instructions.
+- This complements the existing `Message.managed_bot_created` service-message handler so either Telegram Managed Bots delivery shape can activate a project.
+
+**What was tested**
+- Ran `npm run build` successfully after the handler change.
+- Ran `npm run test -- src/project/report-reactions.test.ts src/project/dashboard.test.ts src/lifecycle-worker.test.ts`: 3 files passed, 13 tests passed.
+- Ran `npm run readiness:check`; config/secrets and PM2 lifecycle scheduling passed, but release preflight failed on webhook infrastructure.
+
+**Current state**
+- Managed bot activation is safer for first testers because both documented Managed Bots update shapes are handled.
+- Lifecycle worker scheduling still verifies as every-minute `cron_restart` with `autorestart=false`.
+- Tester release remains blocked by webhook infrastructure: `WEBHOOK_BASE_URL` is still a random `trycloudflare.com` URL and public `/health` failed through that URL.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/stable hostname and update `WEBHOOK_BASE_URL`.
+- Rerun `npm run readiness:check` and `npm run smoke:status`.
+- Then run the live Telegram E2E path: create/activate bot → onboard members → start round → synthesize/report → verify reactions/dashboard.
+
+## 2026-05-02 04:39 — Readiness preflight distinguishes app vs tunnel
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` so tester preflight now checks:
+  - local `/health` on the host
+  - public `/health` through `WEBHOOK_BASE_URL`
+  - PM2 runtime status for `zolara`
+  - PM2 runtime lifecycle-worker cron/autorestart/status, not just static ecosystem config
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` with the stricter passing criteria and explicit `npm run lifecycle:once` verification step.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; local app and PM2 runtime checks now pass, but release preflight still fails on public webhook infrastructure.
+- Ran `npm run lifecycle:once` successfully. Summary: 0 checked/expired/processed/failed and Redis lock was free.
+
+**Current state**
+- We now know the app itself is alive locally and PM2 lifecycle scheduling is installed correctly.
+- The remaining first-tester blocker is specifically the external tunnel/hostname: `WEBHOOK_BASE_URL` is still random `trycloudflare.com`, and public `/health` through that URL fails.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/stable hostname and update `WEBHOOK_BASE_URL`.
+- Rerun `npm run readiness:check`, `npm run smoke:status`, then live Telegram E2E smoke.
+
+## 2026-05-02 05:09 — Smoke baseline now includes PM2 + reaction diagnostics
+
+**What was built**
+- Enhanced `scripts/smoke-status.ts` so live E2E smoke baselines now include:
+  - local `/health` check
+  - public `/health` check
+  - PM2 runtime status for `zolara` and lifecycle cron/autorestart
+  - latest report reaction summary per recent project when a report exists
+- Kept output redacted: no bot tokens, encrypted token blobs, webhook secrets, or raw `.env` values.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` so the smoke baseline description matches the richer diagnostics.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run test -- src/project/report-reactions.test.ts src/project/dashboard.test.ts`: 2 files passed, 10 tests passed.
+- Ran `npm run smoke:status`; diagnostics now show local health and PM2 pass, active project/webhook state is visible, and latest report reactions are only shown when a report exists.
+
+**Current state**
+- E2E smoke diagnostics are more useful for first-tester debugging and can distinguish app health, PM2 health, tunnel health, webhook host, project state, rounds, reports, and reactions.
+- Current smoke baseline still fails before live testers because the public hostname is a random `trycloudflare.com` URL and public `/health` fails.
+- Existing active project has onboarded members but no report; latest round is failed with `Question generation failed`, so a fresh E2E project/round should be used after stable webhook is fixed.
+
+**Next actions**
+- Configure named Cloudflare Tunnel/stable hostname and update `WEBHOOK_BASE_URL`.
+- Rerun `npm run readiness:check` and `npm run smoke:status`.
+- Start a fresh Telegram E2E smoke path rather than reusing the old failed round.
+
+## 2026-05-02 05:39 — Named tunnel config + quick-tunnel runtime detection
+
+**What was built**
+- Updated `ecosystem-tunnel.config.cjs` from a random quick tunnel (`cloudflared tunnel --url http://localhost:3000`) to a named tunnel command: `cloudflared tunnel run zolara-prod` by default, configurable via `ZOLARA_TUNNEL_NAME`.
+- Enhanced `scripts/check-tester-readiness.ts` to inspect both:
+  - static PM2 tunnel config (`ecosystem-tunnel.config.cjs`) and pass only named tunnel config
+  - live PM2 cloudflared runtime and fail if it is still running a quick `--url` tunnel
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` with the PM2 named-tunnel start command and explicit rollback check for `pm2 show cloudflared`.
+
+**What was tested**
+- Ran `node -e "const cfg=require('./ecosystem-tunnel.config.cjs'); ..."` and confirmed the checked-in tunnel config resolves to `tunnel run zolara-prod`.
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; static tunnel config now passes, but runtime still fails because the currently running PM2 `cloudflared` process is still the old quick tunnel.
+
+**Current state**
+- Repository/config is now aligned with named Cloudflare Tunnel production requirements.
+- The host runtime still needs migration: stop/restart PM2 cloudflared from the updated config after the named Cloudflare tunnel and DNS route are created.
+- Tester preflight currently has 3 failures: random `trycloudflare.com` base URL, public `/health` failure, and live PM2 cloudflared still using `--url`.
+
+**Next actions**
+- Create/configure named Cloudflare Tunnel credentials + DNS route for `zolara-prod`.
+- Run `ZOLARA_TUNNEL_NAME=zolara-prod pm2 restart ecosystem-tunnel.config.cjs --update-env` or delete/restart the current `cloudflared` PM2 app from the updated config.
+- Update `.env` to the stable hostname, restart `zolara`, then rerun `npm run readiness:check` and `npm run smoke:status`.
+
+## 2026-05-02 06:08 — Startup script hardened against quick-tunnel overwrite
+
+**What was built**
+- Reworked `scripts/start-zolara.sh` so tester/prod startup no longer scrapes PM2 cloudflared logs for random `trycloudflare.com` URLs.
+- The startup path now treats `.env` `WEBHOOK_BASE_URL` as the source of truth for stable webhook hostnames.
+- Quick-tunnel discovery/writing is now gated behind `ALLOW_EPHEMERAL_TUNNEL=1` for explicit local development only.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` to document the new startup safety behavior.
+
+**What was tested**
+- Ran `bash -n scripts/start-zolara.sh` successfully.
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; local app/PM2/static named-tunnel config still pass, but preflight correctly fails because runtime is still using old quick tunnel and `.env` is still trycloudflare.
+
+**Current state**
+- Zolara should no longer silently rewrite `.env` back to a random quick tunnel during normal tester/prod startup.
+- Remaining blocker is operational: create named Cloudflare tunnel/DNS, restart PM2 `cloudflared` from updated named-tunnel config, update stable `WEBHOOK_BASE_URL`, restart Zolara, then rehook/smoke.
+
+**Next actions**
+- Configure named Cloudflare Tunnel credentials + DNS route for `zolara-prod`.
+- Restart PM2 cloudflared from `ecosystem-tunnel.config.cjs` with `ZOLARA_TUNNEL_NAME=zolara-prod`.
+- Update `.env` stable hostname and rerun `npm run readiness:check` + `npm run smoke:status`.
+
+## 2026-05-02 06:38 — Smoke status now flags quick-tunnel PM2 runtime
+
+**What was built**
+- Enhanced `scripts/smoke-status.ts` so the smoke baseline PM2 check now includes the Cloudflare tunnel process.
+- Smoke status now fails if live PM2 `cloudflared` is still running a quick tunnel (`tunnel --url ...`) instead of a named tunnel (`tunnel run <name>`).
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` to note that the smoke baseline includes quick-tunnel detection.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; still correctly fails on random `trycloudflare.com`, public `/health`, and live quick-tunnel runtime.
+- Ran `npm run smoke:status`; it now reports `pm2_runtime` as failed with `tunnel=online tunnel --url http://localhost:3000`, matching the readiness blocker.
+
+**Current state**
+- Both preflight and smoke baseline now point at the same operational blocker: migrate PM2 `cloudflared` from quick tunnel to named tunnel and set a stable `WEBHOOK_BASE_URL`.
+- Local app health and lifecycle scheduling remain OK.
+
+**Next actions**
+- Configure named Cloudflare Tunnel credentials + DNS route for `zolara-prod`.
+- Restart PM2 cloudflared from `ecosystem-tunnel.config.cjs` with `ZOLARA_TUNNEL_NAME=zolara-prod`.
+- Update `.env` stable hostname, restart Zolara, rerun readiness + smoke.
+
+## 2026-05-02 07:10 — Cloudflare named-tunnel prerequisite checks
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` to inspect Cloudflare named-tunnel prerequisites on the host:
+  - `~/.cloudflared/cert.pem` for tunnel management/login
+  - `~/.cloudflared/config.yml` / `config.yaml`
+  - named tunnel credentials JSON
+  - config fields for `tunnel`, `credentials-file`, and ingress to local Zolara port 3000
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` to make `cloudflared tunnel login`, `tunnel create`, credentials JSON, config.yml, and tunnel list/info checks explicit.
+
+**What was tested**
+- Ran `cloudflared tunnel list`; it fails because no origin cert exists yet.
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; it now identifies the deeper Cloudflare setup blockers, not just the quick-tunnel symptoms.
+
+**Current state**
+- Readiness now reports 6 expected failures:
+  - `.env` `WEBHOOK_BASE_URL` is still random `trycloudflare.com`
+  - public `/health` through that URL fails
+  - Cloudflare origin cert is missing
+  - Cloudflare named-tunnel config is missing
+  - Cloudflare tunnel credentials JSON is missing
+  - live PM2 cloudflared still uses quick `--url`
+- Local app health, static named-tunnel PM2 config, and lifecycle worker scheduling remain OK.
+
+**Next actions**
+- Run interactive `cloudflared tunnel login` on the host.
+- Create `zolara-prod`, route DNS to the stable hostname, write `~/.cloudflared/config.yml`, and migrate PM2 cloudflared to the named tunnel.
+- Update `.env` stable hostname, restart Zolara, then rerun readiness + smoke.
+
+## 2026-05-02 07:38 — Backend hosting option documented + Docker production hardening
+
+**What was built**
+- Added `docs/BACKEND_HOSTING_OPTIONS.md` after evaluating the GitHub Pages idea:
+  - GitHub Pages is OK for static landing/docs only.
+  - Telegram webhooks require a live HTTPS backend with Node, DB, Redis, and secrets.
+  - Recommended first-tester paths are either finish named Cloudflare Tunnel on this host or move backend to a VPS/container platform.
+- Hardened container deployment basics:
+  - `Dockerfile` now starts the compiled app with `npm start` instead of dev watcher mode.
+  - Added `.dockerignore` to keep `.env`, `node_modules`, logs, dist, and repo noise out of build context.
+  - Fixed `docker-compose.yml` env names to match current config (`ZOLARA_BOT_TOKEN`, `MANAGED_BOTS_TOKEN`) and strengthened the dev webhook secret default length.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; still fails on the same Cloudflare runtime/setup blockers, while local app and lifecycle checks pass.
+
+**Current state**
+- GitHub Pages is explicitly documented as insufficient for webhook runtime.
+- Zolara is a bit more ready for an alternative container/VPS deployment if we choose to avoid Cloudflare Tunnel setup.
+- First-tester blocker remains stable public HTTPS backend: either named tunnel credentials/DNS on this host or deploy backend to a platform with HTTPS.
+
+**Next actions**
+- Decide infrastructure path:
+  1. Complete named Cloudflare Tunnel setup on current host, or
+  2. Deploy Dockerized backend to VPS/Render/Railway/Fly with managed Postgres/Redis.
+- Then rerun `npm run readiness:check` and `npm run smoke:status` before live E2E smoke.
+
+## 2026-05-02 08:11 — Docker deploy path verified
+
+**What was built**
+- Removed the non-portable local `file:../self-healing-agent/dist` dependency from `package.json`/`package-lock.json` so container/platform builds do not depend on a sibling checkout outside the repo.
+- Added `src/types/self-healing-agent.d.ts` so TypeScript still understands the optional self-healing integration while runtime keeps the existing try/catch fallback when the package is unavailable.
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` to mark the Docker build path as locally verified and explain that self-healing is optional.
+
+**What was tested**
+- Ran `npm install --package-lock-only` successfully after dependency cleanup.
+- Ran `npm run build` successfully.
+- Ran `docker build -t zolara:test .` successfully. This verifies the Docker context can install dependencies and compile without the sibling `self-healing-agent` package.
+- Ran `npm run readiness:check`; it still fails only on stable-public-HTTPS/Cloudflare setup blockers, while local app/lifecycle checks pass.
+
+**Current state**
+- Alternative backend hosting is materially more viable: the app now builds in a clean Docker context.
+- First-tester blocker remains choosing/provisioning stable HTTPS runtime: named Cloudflare Tunnel on this host, or Docker backend on VPS/Render/Railway/Fly with Postgres/Redis and a scheduled lifecycle worker.
+
+**Next actions**
+- Pick infrastructure path.
+- If container platform: provision Postgres/Redis/secrets, deploy `zolara:test` equivalent, schedule `npm run lifecycle:once`, rehook bots, then run readiness + smoke.
+- If current host: complete Cloudflare login/tunnel/DNS and migrate PM2 cloudflared to named tunnel.
+
+## 2026-05-02 08:38 — Container lifecycle worker loop added
+
+**What was built**
+- Added `scripts/container-lifecycle-loop.sh` for container hosts that can run a separate always-on worker process but do not provide native cron.
+- Added `npm run lifecycle:loop`, which calls the existing safe one-shot `npm run lifecycle:once` every 60 seconds by default.
+- Kept PM2 behavior unchanged: PM2 deployments should continue using `cron_restart: '* * * * *'` with `autorestart: false`.
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` so container/VPS deploy instructions include both cron-style scheduling and the new always-on worker fallback.
+
+**What was tested**
+- Ran `bash -n scripts/container-lifecycle-loop.sh` successfully.
+- Ran `npm run build` successfully.
+- Ran `npm run lifecycle:once` successfully: lock acquired, 0 validation deadlines, 0 round deadlines, 0 failures.
+- Ran `npm run readiness:check`; stable-public-HTTPS/Cloudflare setup remains the only tester blocker class.
+
+**Current state**
+- Container deployment path now has a concrete recurring lifecycle-worker option, not just a PM2 cron assumption.
+- First-tester blocker remains infrastructure: stable HTTPS backend via named Cloudflare Tunnel or deployed container platform.
+
+**Next actions**
+- Choose and provision stable HTTPS runtime.
+- Once a stable URL exists, update `WEBHOOK_BASE_URL`, rehook bots, run `npm run readiness:check` and `npm run smoke:status`, then do live Telegram E2E smoke.
+
+## 2026-05-02 09:08 — Smoke reaction summary made independent of recent rounds window
+
+**What was built**
+- Hardened `scripts/smoke-status.ts` report-reaction diagnostics.
+- The smoke helper now resolves the latest report's round number directly from `reports.roundId` instead of depending on that round being present in the latest 3 rounds list.
+- This prevents `latestReportReactions` from silently disappearing in older projects with more than 3 rounds once reports exist.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npx vitest run src/project/report-reactions.test.ts` successfully: 1 file passed, 1 test passed.
+- Ran `npm run smoke:status`; it still correctly fails on stable-host/public-health/quick-tunnel blockers and shows the active project baseline safely redacted.
+- Ran `npm run readiness:check`; it still reports the same 6 expected stable-public-HTTPS/Cloudflare setup failures.
+
+**Current state**
+- Smoke diagnostics are more reliable for the report-reaction part of the live E2E path.
+- Active test project still has no reports; latest round failed at question generation, so final E2E should use a fresh round/project after stable webhook is fixed.
+- Tester blocker remains infrastructure: `WEBHOOK_BASE_URL` is still random `trycloudflare.com`, public health fails, Cloudflare named-tunnel cert/config/credentials are missing, and PM2 cloudflared is still running quick `--url` mode.
+
+**Next actions**
+- Provision stable HTTPS runtime via named Cloudflare Tunnel or deployed container host.
+- Update `WEBHOOK_BASE_URL`, restart/rehook, then rerun readiness + smoke before live Telegram E2E.
+
+## 2026-05-02 09:38 — Smoke verifies webhook allowed_updates
+
+**What was built**
+- Centralized project-bot webhook `allowed_updates` into `PROJECT_BOT_ALLOWED_UPDATES` in `src/telegram/managed-bots-api.ts`.
+- Updated `setManagedBotWebhook()` to use the shared constant, keeping future setup and diagnostics aligned.
+- Enhanced `scripts/smoke-status.ts` to inspect Telegram `getWebhookInfo.allowed_updates` for recent active project bots and flag missing update types.
+- Added a new smoke check: `active_webhooks_allowed_updates`.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; it now reports the active project webhook includes required allowed updates, while still failing on the known stable-host/public-health/quick-tunnel blockers.
+- Ran `npm run readiness:check`; it still reports the same 6 expected stable-public-HTTPS/Cloudflare setup failures.
+
+**Current state**
+- The live E2E smoke baseline now covers webhook update subscriptions explicitly, including `message`, `callback_query`, `chat_member`, `poll_answer`, and reaction updates.
+- Current active project webhook has the right allowed update set, but it is still pointed at the random trycloudflare host.
+- Tester blocker remains infrastructure: stable HTTPS backend and named tunnel/deployed host.
+
+**Next actions**
+- Provision stable HTTPS runtime, update `WEBHOOK_BASE_URL`, restart/rehook, and rerun readiness + smoke.
+- After that, start a fresh Telegram E2E project/round rather than reusing the old failed round.
+
+## 2026-05-02 10:08 — Readiness supports external/container hosting mode
+
+**What was built**
+- Added `ZOLARA_HOSTING_MODE=external` support to `scripts/check-tester-readiness.ts`.
+- Default mode remains `cloudflare`, so the current host still fails hard on missing named-tunnel cert/config/credentials and quick-tunnel PM2 runtime.
+- External mode skips local Cloudflare named-tunnel file requirements and downgrades PM2 quick-tunnel runtime to a warning, while still requiring:
+  - configured secrets
+  - HTTPS `WEBHOOK_BASE_URL`
+  - non-`trycloudflare.com` stable host
+  - working public `/health`
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` so container/platform deploys set `ZOLARA_HOSTING_MODE=external` and verify with that mode.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran default `npm run readiness:check`; it still reports the same 6 current-host Cloudflare failures.
+- Ran `ZOLARA_HOSTING_MODE=external npm run readiness:check`; Cloudflare host-file checks are skipped, but it still correctly fails on the current random `trycloudflare.com` `WEBHOOK_BASE_URL` and failed public `/health`.
+
+**Current state**
+- The readiness check now cleanly supports both tester infrastructure paths:
+  - current host + named Cloudflare Tunnel (`ZOLARA_HOSTING_MODE` unset/default)
+  - external Docker/VPS/container HTTPS runtime (`ZOLARA_HOSTING_MODE=external`)
+- The actual first-tester blocker remains stable HTTPS runtime; no stable public backend is configured yet.
+
+**Next actions**
+- Choose one hosting path and provision the stable URL.
+- Update `WEBHOOK_BASE_URL`, rehook bots, then rerun readiness + smoke before live Telegram E2E.
+
+## 2026-05-02 10:58 — Rehook safety hardened + smoke detects unset webhooks
+
+**What was built**
+- Hardened `scripts/rehook-all.sh` for stable-host migration:
+  - added `DRY_RUN=1` mode for safe preflight before changing Telegram webhook state
+  - refuses reserved/example hostnames (`example.com`, `example.org`, etc.) unless explicitly overridden
+  - keeps refusing random `trycloudflare.com` unless `ALLOW_EPHEMERAL_TUNNEL=1` is set for local/dev repair
+  - makes `.env` update optional/portable for container platforms where env is injected
+  - checks `setWebhook` API results and exits non-zero when any active bot fails
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` to require dry-run before real rehook and to note reserved-host refusal.
+- Enhanced `scripts/smoke-status.ts` with `active_webhooks_set`, so active project bots with no Telegram webhook URL are now flagged explicitly.
+
+**What was tested**
+- Ran `bash -n scripts/rehook-all.sh` successfully.
+- Ran a dry-run against a reserved hostname and confirmed it is refused before Telegram API calls.
+- Ran a dry-run against an allowed placeholder hostname with `ALLOW_RESERVED_HOST=1`; it listed the project bots that would be rehooked without mutating Telegram state.
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; it now flags `active_webhooks_set` as failed for the current active test bot.
+
+**Current state**
+- Rehook tooling is safer for the upcoming stable-host cutover.
+- Smoke now detects that the current active test bot has no webhook URL set. Attempting to restore the old random trycloudflare webhook failed because the current random host does not resolve, which matches the existing public-health blocker.
+- First-tester blocker remains stable HTTPS runtime. Once a real stable host is available, run:
+  - `DRY_RUN=1 WEBHOOK_BASE_URL=https://<stable-host> scripts/rehook-all.sh`
+  - `WEBHOOK_BASE_URL=https://<stable-host> scripts/rehook-all.sh`
+  - `npm run readiness:check && npm run smoke:status`
+
+**Next actions**
+- Provision stable HTTPS runtime via named Cloudflare Tunnel or external backend host.
+- Rehook active bots only after public `/health` passes on that stable host.
+
+## 2026-05-02 11:19 — Rehook dry-run no longer blocked by legacy active rows
+
+**What was built**
+- Refined `scripts/rehook-all.sh` so the stable-host cutover is not blocked by legacy/incomplete active rows that have no project-bot username or credentials.
+- Such rows are now counted as `skipped` with a warning during dry-run/rehook.
+- Active rows that do have a bot username but are missing token/secret still fail, because those represent real project-bot configuration corruption.
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` to document the skip/fail behavior.
+
+**What was tested**
+- Ran `bash -n scripts/rehook-all.sh` successfully.
+- Ran `DRY_RUN=1 WEBHOOK_BASE_URL=https://stable.example.org ALLOW_RESERVED_HOST=1 ENV_FILE=/tmp/zolara-test.env scripts/rehook-all.sh`; result: 2 project-bot webhooks would be registered, 1 incomplete legacy active row skipped, 0 failures.
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; it still correctly fails on random `trycloudflare`, public `/health`, quick-tunnel PM2 runtime, and unset active webhook.
+- Ran `npm run readiness:check`; it still reports the same current-host stable HTTPS/Cloudflare failures.
+
+**Current state**
+- Rehook preflight is now useful for the real cutover: it will show which actual project bots will be rehooked and will not abort on the known incomplete legacy row.
+- Active test bot remains without a webhook until a stable public host is available.
+- First-tester blocker remains stable HTTPS runtime.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Run dry-run rehook, real rehook, readiness, smoke, then fresh Telegram E2E.
+
+## 2026-05-02 11:49 — Smoke surfaces incomplete active rows + cleanup dry-run added
+
+**What was built**
+- Enhanced `scripts/smoke-status.ts` to inspect all active project rows, not just the latest 5 projects.
+- Smoke now reports:
+  - count of active project bots with usable credentials
+  - `active_rows_without_bot_credentials` when active rows are missing bot username/token/secret
+- Added `scripts/archive-incomplete-active-projects.ts` and `npm run cleanup:incomplete-active-projects`.
+  - Dry-run by default.
+  - Prints only redacted IDs and non-secret metadata.
+  - Requires `CONFIRM_ARCHIVE=1` before archiving incomplete active rows.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; it now flags 1 incomplete active row (`7767…37c8`) in addition to the existing stable-host/public-health/quick-tunnel/unset-webhook blockers.
+- Ran `npm run cleanup:incomplete-active-projects`; dry-run found 1 incomplete active row: `Zolara project` missing botUsername, botTokenEncrypted, and webhookSecret.
+- Ran `npm run readiness:check`; it still reports the same current-host stable HTTPS/Cloudflare failures.
+
+**Current state**
+- We have a safe cleanup path for the legacy incomplete active row, but it has not been mutated.
+- Rehook dry-run remains clean for real project bots: 2 would register, 1 incomplete legacy row can be skipped/archived.
+- First-tester blocker remains stable HTTPS runtime, plus the active test bot has no webhook until rehooked to that stable host.
+
+**Next actions**
+- Decide whether to archive the incomplete active row with `CONFIRM_ARCHIVE=1 npm run cleanup:incomplete-active-projects`.
+- Provision stable HTTPS host, dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 12:19 — Smoke supports external/container hosting mode
+
+**What was built**
+- Added `ZOLARA_HOSTING_MODE=external` support to `scripts/smoke-status.ts`.
+- Smoke now emits a `hosting_mode` check so the baseline clearly states whether it is evaluating current-host Cloudflare mode or external/container hosting mode.
+- In external mode, PM2 tunnel runtime is ignored instead of failing the smoke baseline, matching readiness behavior.
+- Updated `docs/BACKEND_HOSTING_OPTIONS.md` so external/container verification runs both readiness and smoke with `ZOLARA_HOSTING_MODE=external`.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran default `npm run readiness:check`; it still reports the same 6 current-host Cloudflare/stable HTTPS failures.
+- Ran `ZOLARA_HOSTING_MODE=external npm run smoke:status`; PM2 tunnel quick-mode is now correctly ignored in external mode, while the smoke still fails on the true remaining blockers: random `trycloudflare.com`, failed public `/health`, one incomplete active row, and unset active bot webhook.
+
+**Current state**
+- Both readiness and smoke now support the two infrastructure paths consistently:
+  - current host + named Cloudflare Tunnel
+  - external/container HTTPS backend
+- The external/container path will not be falsely blocked by local PM2 cloudflared state.
+- First-tester blocker remains stable HTTPS runtime; current active test bot still needs rehook after that host exists.
+
+**Next actions**
+- Choose/provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 12:49 — Readiness now checks active project DB hygiene
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` to inspect active project rows in the database.
+- Readiness now reports:
+  - count of active project bots with usable credentials
+  - incomplete active project rows missing bot username/token/secret, using redacted IDs only
+- Fixed readiness process exit behavior after adding DB inspection so postgres-js idle handles do not leave the command hanging.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran default `npm run readiness:check`; it now reports 7 failures: the previous 6 current-host Cloudflare/stable HTTPS blockers plus 1 incomplete active row (`7767…37c8`).
+- Ran `ZOLARA_HOSTING_MODE=external npm run readiness:check`; it now reports 3 failures: random `trycloudflare.com`, failed public `/health`, and the incomplete active row. PM2 quick tunnel is only a warning in external mode.
+
+**Current state**
+- Readiness and smoke now both surface the incomplete legacy active row instead of leaving it only to smoke diagnostics.
+- Active project bots with credentials: 2.
+- Incomplete active row remains unmodified; cleanup is available via dry-run-first script.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Decide whether to archive incomplete row with `CONFIRM_ARCHIVE=1 npm run cleanup:incomplete-active-projects`.
+- Provision stable HTTPS host, dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 13:19 — Readiness now verifies project-bot Telegram webhooks
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` to call Telegram `getWebhookInfo` for active project bots with credentials.
+- Readiness now fails before testers if an active project bot:
+  - has no webhook URL set
+  - points at a host different from `WEBHOOK_BASE_URL`
+  - is missing required `allowed_updates`
+- Output remains redacted: no bot tokens, webhook secrets, encrypted token blobs, or full webhook URLs are printed.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran default `npm run readiness:check`; it now reports 9 failures: existing current-host Cloudflare/stable HTTPS blockers, incomplete active row, and both credentialed project bots having no webhook URL set.
+- Ran `ZOLARA_HOSTING_MODE=external npm run readiness:check`; it now reports 5 real external-mode failures: random `trycloudflare.com`, failed public `/health`, incomplete active row, and both credentialed project bots having no webhook URL set. PM2 quick tunnel remains only a warning in external mode.
+
+**Current state**
+- Readiness now catches the same unset-webhook issue as smoke, earlier in the preflight.
+- Credentialed active project bots: 2.
+- Both currently have no Telegram webhook URL and must be rehooked after a stable public host is available.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run `DRY_RUN=1 WEBHOOK_BASE_URL=https://<stable-host> scripts/rehook-all.sh`, then real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 13:44 — Smoke now audits all active project-bot webhooks
+
+**What was built**
+- Enhanced `scripts/smoke-status.ts` so webhook checks inspect every active project bot with credentials, not only active projects that happen to appear in the latest-five project summary.
+- `active_webhooks_set` now reports the full count/list of active credentialed bots with unset webhooks.
+- This aligns smoke with readiness and prevents older active bots from being silently missed.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran default `npm run readiness:check`; current result remains 9 failures: random `trycloudflare`, failed public `/health`, missing Cloudflare named-tunnel local files/runtime, incomplete active row, and both active project bot webhooks unset.
+- Ran `npm run smoke:status`; it now reports `2 active project bot webhook(s) unset: @pilot_project_zolara_b_zol_bot, @zolaraflowtest_zolaa_bot`.
+- Ran `ZOLARA_HOSTING_MODE=external npm run smoke:status`; PM2 tunnel is ignored for external mode and the same real webhook/host blockers remain.
+
+**Current state**
+- Readiness and smoke now agree that there are 2 credentialed active project bots and both need webhook registration after stable hosting is available.
+- The known incomplete legacy active row remains unmodified.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 14:14 — Startup auto-rehook logging hardened
+
+**What was built**
+- Hardened `src/server/index.ts` startup auto-rehook logging for stable-host cutover.
+- Auto-rehook no longer prints full project-bot webhook URLs/token hashes in logs; it now reports the target host only.
+- Auto-rehook now summarizes `registered`, `skipped`, `failed`, and `activeRows`, so the known incomplete legacy active row is visible without making the startup summary look like a successful full registration.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; current failures remain expected: random `trycloudflare`, failed public `/health`, PM2 quick tunnel in current-host mode, incomplete active row, and 2 active project bot webhooks unset.
+- Ran `npm run readiness:check`; current result remains 9 failures with the same known stable-host/webhook blockers.
+
+**Current state**
+- Startup auto-rehook is safer for production-style logs when the stable host is cut over.
+- Readiness and smoke still agree that 2 credentialed active project bots need webhook registration after stable HTTPS hosting exists.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 14:44 — Auto-rehook now fails partial credential corruption
+
+**What was built**
+- Tightened startup auto-rehook behavior in `src/server/index.ts`:
+  - legacy active rows with no bot username/token/secret are still skipped safely
+  - active rows that have a bot username but are missing token or webhook secret now count as failures instead of being silently skipped
+- This matches the stricter `scripts/rehook-all.sh` cutover behavior and prevents real project-bot credential corruption from being hidden during startup.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; current failures remain expected: random `trycloudflare`, failed public `/health`, PM2 quick tunnel in current-host mode, incomplete active row, and 2 active project-bot webhooks unset.
+- Ran `npm run readiness:check`; current result remains 9 known failures with stable-host/webhook blockers.
+
+**Current state**
+- Manual rehook, startup auto-rehook, readiness, and smoke now agree on how to treat incomplete vs corrupt active project bot rows.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 15:14 — Readiness/smoke classify incomplete vs corrupt bot rows
+
+**What was built**
+- Refined `scripts/check-tester-readiness.ts` active-project DB hygiene output to distinguish:
+  - legacy incomplete active rows with no bot identity/credentials
+  - active project-bot rows with a username but partial credentials
+  - odd partial rows with token/secret but no username
+- Refined `scripts/smoke-status.ts` to show the same classification in `active_rows_without_bot_credentials`.
+- This makes the stable-host cutover checklist clearer: the current known bad row is legacy incomplete, while partial project-bot credentials would be a separate corruption failure.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; it now reports `Legacy incomplete active project rows: 1 (7767…37c8)` and `No active project-bot rows with partial credentials`, plus the same known stable-host/webhook blockers.
+- Ran `npm run smoke:status`; `active_rows_without_bot_credentials` now reports `1 legacy incomplete row(s), 0 project-bot row(s) with partial credentials, 0 odd partial row(s): 7767…37c8`.
+
+**Current state**
+- Rehook, startup auto-rehook, readiness, and smoke now share the same mental model for active-row hygiene.
+- Two credentialed active project bots still have unset webhooks and need rehook after stable HTTPS exists.
+- Stable HTTPS runtime remains the main first-tester blocker.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 15:44 — Lifecycle worker summaries are now auditable in smoke
+
+**What was built**
+- Added `lifecycle_worker_summary` audit events in `src/util/lifecycle-worker.ts` for every lifecycle worker run, including locked/skipped runs.
+- Each audit event records non-secret summary data: lock state, duration, validation deadline counts, round deadline counts, and totals.
+- Enhanced `scripts/smoke-status.ts` with a `lifecycle_worker_observable` check that requires a recent lifecycle summary audit event and prints a concise, safe summary.
+- Smoke output now includes `latestLifecycleWorker` so tester readiness can verify the recurring one-shot worker is actually writing observable run results, not only configured in PM2.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run lifecycle:once`; it completed with `locked=false`, duration ~211ms, and zero pending validation/round deadline work.
+- Ran `npm run smoke:status`; it now reports `lifecycle_worker_observable` as passing with a recent lifecycle summary audit event.
+- Ran `npm run readiness:check`; current result remains 9 known failures from stable-host/webhook blockers.
+
+**Current state**
+- Lifecycle scheduling is now observable through DB audit events and smoke status, which helps distinguish PM2 config from actual worker execution.
+- Stable HTTPS runtime and project-bot rehooking remain the first-tester blockers.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 16:14 — Readiness now checks lifecycle audit freshness + audit schema fixed
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` with a lifecycle observability check.
+  - It reads the latest `lifecycle_worker_summary` audit event.
+  - It reports age, locked state, totals, and duration without printing secrets.
+  - It passes when the latest summary is recent enough for tester readiness.
+- Fixed `engagement_events.member_id` so system/project-level audit events can be written without a member.
+  - Changed schema from `serial('member_id')` to nullable `integer('member_id')`.
+  - Added `drizzle/0004_nullable_engagement_event_member.sql`.
+  - Applied the safe ALTER statements to the current DB: drop default and drop NOT NULL.
+- Updated `src/util/audit.ts` so global audit events explicitly write `memberId: null` / `projectId: null` when absent.
+
+**What was tested**
+- Ran `npm run build` successfully after the schema/audit changes.
+- Ran `npm run lifecycle:once`; after the DB fix it writes a fresh `lifecycle_worker_summary` event successfully.
+- Ran `npm run readiness:check`; it now reports lifecycle summary audit as recent and still fails on the known stable-host/webhook blockers.
+- Ran `npm run smoke:status`; it still reports the known blockers and includes the latest lifecycle worker summary.
+
+**Current state**
+- Lifecycle observability is now covered by both readiness and smoke.
+- System-level audit events no longer depend on an arbitrary member row.
+- Stable HTTPS runtime and project-bot rehooking remain the first-tester blockers.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 16:44 — Dashboard `/next` now handles failed/cancelled rounds
+
+**What was built**
+- Improved `recommendAdminNextAction` in `src/project/dashboard.ts` so failed and cancelled rounds are treated as actionable recovery states.
+- A failed latest round now tells the admin to restart with a clearer topic instead of falling through to the generic first-round guidance.
+- A cancelled latest round now tells the admin to start a replacement round.
+- Added dashboard helper test coverage for both states.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npx vitest run src/project/dashboard.test.ts`; 10 tests passed.
+- Ran `npm run readiness:check`; lifecycle audit remains fresh and current failures remain the known stable-host/webhook blockers.
+
+**Current state**
+- `/dashboard` and `/next` recovery guidance is clearer for the current failed-round smoke state.
+- Stable HTTPS runtime and project-bot rehooking remain the first-tester blockers.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 17:14 — Report reaction callbacks hardened for stale/non-member taps
+
+**What was built**
+- Added `isValidReportReaction` in `src/project/report-reactions.ts` and test coverage for valid/invalid reaction callback values.
+- Hardened report reaction callbacks in both the control-plane bot (`src/project/index.ts`) and per-project bot handler (`src/project/managed-bots/bot-instance.ts`).
+- Invalid/stale reaction callback data now shows a clear stale-reaction alert instead of silently doing nothing or storing junk.
+- Users who tap a report reaction before being connected as project members now get a clear alert to open the project bot invite first, so tester feedback is not silently dropped.
+- Valid member reactions now acknowledge only after the DB insert succeeds.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npx vitest run src/project/report-reactions.test.ts`; 2 tests passed.
+- Ran `npm run readiness:check`; current failures remain the known stable-host/webhook blockers.
+
+**Current state**
+- Report reaction fallback behavior is safer for first testers and should be less confusing during live E2E.
+- Stable HTTPS runtime and project-bot rehooking remain the first-tester blockers.
+
+**Next actions**
+- Provision stable HTTPS host.
+- Optionally archive incomplete legacy active row.
+- Run dry-run rehook, real rehook, readiness, smoke, fresh Telegram E2E.
+
+## 2026-05-02 18:05 — 18 tests passing; stable HTTPS still requires manual Cloudflare setup
+
+**What was built**
+- All previous report reaction hardening remains in place (isValidReportReaction, stale/non-member callbacks).
+- Ran full test suite: `npm run build` passes, 18 tests across dashboard, report-reactions, and individual-profile pass.
+
+**What was tested**
+- `npm run build` ✅
+- `npx vitest run src/project/dashboard.test.ts src/project/report-reactions.test.ts src/project/individual-profile.test.ts` ✅ 18 tests passed
+- `npm run readiness:check` still reports 9 known failures
+
+**Current state**
+- All code/test items from the tester-readiness plan are in good shape.
+- Stable HTTPS host is the remaining hard blocker — requires manual Cloudflare one-time setup (tunnel login, create, route DNS) which cannot be done programmatically in this session.
+
+**Next actions**
+- Manual (user): Run `cloudflared tunnel login`, `cloudflared tunnel create zolara-prod`, add DNS route, update `~/.cloudflared/config.yml`, then start named tunnel
+- Manual (user): Start named tunnel via `ecosystem-tunnel.config.cjs` or direct `cloudflared tunnel run`
+- After stable HTTPS exists: rehook project bots, archive legacy incomplete row, run E2E smoke
+
+## 2026-05-02 18:14 — Readiness check now prints concrete remediation actions
+
+**What was built**
+- Enhanced `scripts/check-tester-readiness.ts` to collect and print a deduplicated **Next actions** section when preflight failures remain.
+- The readiness output now tells the operator exactly what to do for the current blockers:
+  - Run Cloudflare named-tunnel login/create/route DNS.
+  - Create `~/.cloudflared/config.yml` for `zolara-prod` with ingress to `localhost:3000`.
+  - Restart the PM2 tunnel using the named tunnel config.
+  - Review/archive incomplete active project rows only after approval.
+  - Rehook project bots after stable public `/health` passes.
+- Ran the incomplete-active cleanup script in dry-run mode; it still identifies only the known legacy row `7767…37c8` and made no DB changes.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run readiness:check`; it still fails on the 9 known blockers, but now includes concrete remediation steps.
+- Ran `npm run cleanup:incomplete-active-projects` dry-run successfully.
+
+**Current state**
+- Stable HTTPS setup remains blocked on interactive Cloudflare/domain work.
+- The readiness command is now more useful for the exact handoff required to unblock testers.
+
+**Next actions**
+- Manual Cloudflare setup: login, create `zolara-prod`, route DNS, create config, start named tunnel.
+- After stable host works: rehook active project bots, archive the legacy incomplete row with approval, run full E2E smoke.
+
+## 2026-05-02 18:44 — Added safe Cloudflare tunnel config helper
+
+**What was built**
+- Added `scripts/prepare-cloudflare-tunnel-config.ts` and npm script `tunnel:prepare-config`.
+- The helper prepares `~/.cloudflared/config.yml` after the interactive Cloudflare prerequisites are done.
+- Safety checks:
+  - Dry-run by default; requires `CONFIRM_WRITE=1` to write.
+  - Refuses random `trycloudflare.com` hostnames and localhost/reserved hosts.
+  - Requires `~/.cloudflared/cert.pem` and tunnel credentials JSON before writing.
+  - Prints only paths and hostname, never credential contents.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` to use the helper instead of hand-editing the config.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `WEBHOOK_BASE_URL=<current trycloudflare URL> npm run tunnel:prepare-config`; it correctly refused the random hostname.
+- Ran `WEBHOOK_BASE_URL=https://zolara.example.com npm run tunnel:prepare-config`; it correctly stopped at missing `~/.cloudflared/cert.pem`.
+- Ran `npm run readiness:check`; current result remains the known 9 stable-host/webhook blockers.
+
+**Current state**
+- Stable HTTPS setup is still blocked on interactive Cloudflare login/create/route DNS.
+- Once the operator completes login/create, the config step is now scripted and safer.
+
+**Next actions**
+- Manual Cloudflare setup: `cloudflared tunnel login`, `cloudflared tunnel create zolara-prod`, route DNS for the chosen stable hostname.
+- Then run `CONFIRM_WRITE=1 WEBHOOK_BASE_URL=https://<stable-host> npm run tunnel:prepare-config`.
+- Start named tunnel, update/restart PM2, rehook project bots, archive the legacy row with approval, run E2E smoke.
+
+## 2026-05-02 19:14 — Readiness handoff now points to tunnel config helper
+
+**What was built**
+- Updated `scripts/check-tester-readiness.ts` remediation output so the missing Cloudflare config action points to the safe helper added last cycle:
+  - `CONFIRM_WRITE=1 WEBHOOK_BASE_URL=https://<stable-host> npm run tunnel:prepare-config`
+- This keeps the readiness failure output aligned with the runbook and avoids asking the operator to hand-edit `~/.cloudflared/config.yml`.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `WEBHOOK_BASE_URL=https://zolara.example.com npm run tunnel:prepare-config`; it correctly stopped at missing `~/.cloudflared/cert.pem`.
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers, and the Next actions now reference the helper.
+
+**Current state**
+- Stable HTTPS setup is still blocked on interactive Cloudflare login/create/route DNS.
+- Operator handoff is more consistent: runbook and readiness output now name the same config command.
+
+**Next actions**
+- Manual Cloudflare setup: `cloudflared tunnel login`, `cloudflared tunnel create zolara-prod`, route DNS.
+- Then run `CONFIRM_WRITE=1 WEBHOOK_BASE_URL=https://<stable-host> npm run tunnel:prepare-config`, start named tunnel, rehook bots, archive legacy row with approval, run E2E smoke.
+
+## 2026-05-02 19:44 — Smoke status now emits actionable remediation list
+
+**What was built**
+- Enhanced `scripts/smoke-status.ts` so JSON output includes a `nextActions` array when checks fail.
+- The smoke output now maps failing checks to safe operational remediation:
+  - stable HTTPS hostname/runbook
+  - public `/health` verification
+  - PM2 named tunnel restart
+  - incomplete active row dry-run/archive flow
+  - project-bot rehook command after stable health passes
+  - lifecycle audit freshness if it ever goes stale
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `npm run smoke:status`; it still exits 1 on known blockers but now prints `nextActions` with the concrete recovery sequence.
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers.
+
+**Current state**
+- Both readiness and smoke now provide concrete operator next steps instead of only failure labels.
+- Stable HTTPS setup remains blocked on interactive Cloudflare login/create/route DNS.
+
+**Next actions**
+- Manual Cloudflare setup, then run `npm run tunnel:prepare-config`, start named tunnel, rehook project bots, archive the legacy row with approval, run E2E smoke.
+
+## 2026-05-02 20:14 — Rehook script now refuses dead stable hosts
+
+**What was built**
+- Hardened `scripts/rehook-all.sh` so real rehook runs verify `${WEBHOOK_BASE_URL}/health` returns `status=ok` before calling Telegram `setWebhook`.
+- Dry-runs still skip public health and show exactly which active project bots would be registered.
+- Added an explicit `SKIP_PUBLIC_HEALTH_CHECK=1` emergency override, documented as intentional-only.
+- Updated `docs/STABLE_WEBHOOK_RUNBOOK.md` with the safer dry-run → real-run sequence.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `DRY_RUN=1 WEBHOOK_BASE_URL=https://zolara.example.com scripts/rehook-all.sh`; it listed the 2 project bots that would be rehooked and skipped the known incomplete row.
+- Ran `WEBHOOK_BASE_URL=https://zolara.example.com scripts/rehook-all.sh`; it correctly refused to rehook because public `/health` failed.
+- Ran `npm run readiness:check`; current failures remain the known 9 stable-host/webhook blockers.
+
+**Current state**
+- Rehooking is safer: project bots will not be pointed at a dead stable hostname by accident.
+- Stable HTTPS setup remains blocked on interactive Cloudflare login/create/route DNS.
+
+**Next actions**
+- Manual Cloudflare setup, then run the documented dry-run rehook first; only run the real rehook after public `/health` passes.
+
+## 2026-05-02 20:44 — Rehook flow exposed as npm script and diagnostics aligned
+
+**What was built**
+- Added npm script `webhooks:rehook` for the existing safe rehook flow.
+- Updated readiness and smoke remediation copy to use the safer npm-script sequence:
+  - `DRY_RUN=1 WEBHOOK_BASE_URL=https://<stable-host> npm run webhooks:rehook`
+  - then run without `DRY_RUN` after public `/health` passes.
+- Updated the stable webhook runbook to use `npm run webhooks:rehook` instead of directly invoking the shell script.
+- Readiness now also attaches the public `/health` remediation action on HTTP non-OK responses, not only fetch failures.
+
+**What was tested**
+- Ran `npm run build` successfully.
+- Ran `DRY_RUN=1 WEBHOOK_BASE_URL=https://zolara.example.com npm run webhooks:rehook`; it listed both active project bots and skipped the known incomplete row without DB/env changes.
+- Ran `npm run readiness:check`; current failures remain the known 9 blockers and the Next actions now reference `npm run webhooks:rehook`.
+- Ran `npm run smoke:status`; it still exits 1 on known blockers and now references the same rehook command in `nextActions`.
+
+**Current state**
+- Operator handoff is now consistent across runbook, readiness, smoke, and package scripts.
+- Stable HTTPS setup remains blocked on interactive Cloudflare login/create/route DNS.
+
+**Next actions**
+- Manual Cloudflare setup, then dry-run `npm run webhooks:rehook`; only run real rehook after public `/health` passes.

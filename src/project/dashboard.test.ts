@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   dashboardNextAction,
   formatOnboardingBreakdown,
+  formatReportReactionSummary,
   formatValidationHistory,
   missingResponses,
   pickCurrentRound,
@@ -81,6 +82,30 @@ describe('admin dashboard helpers', () => {
     }).command).toBe('/startround <topic>');
   });
 
+  it('surfaces failed or cancelled rounds as actionable restart states', () => {
+    expect(recommendAdminNextAction({
+      pendingOnboarding: 0,
+      roundStatus: 'failed',
+      missingResponses: 0,
+      hasMembers: true,
+    })).toMatchObject({
+      label: 'Restart the round with a clearer topic',
+      command: '/startround <topic>',
+      urgency: 'action',
+    });
+
+    expect(recommendAdminNextAction({
+      pendingOnboarding: 0,
+      roundStatus: 'cancelled',
+      missingResponses: 0,
+      hasMembers: true,
+    })).toMatchObject({
+      label: 'Start a replacement round',
+      command: '/startround <topic>',
+      urgency: 'action',
+    });
+  });
+
   it('recommends wait states instead of disruptive commands during active validation/lifecycle work', () => {
     expect(recommendAdminNextAction({
       pendingOnboarding: 0,
@@ -115,6 +140,12 @@ describe('admin dashboard helpers', () => {
     expect(text).toContain('✅ 1 / ⚠️ 2 / ❓ 0');
     expect(text).toContain('c1');
     expect(text).toContain('refined: Clearer topic');
+  });
+
+  it('formats report reactions with convergence summary', () => {
+    expect(formatReportReactionSummary(null)).toBe('No report reactions yet.');
+    expect(formatReportReactionSummary({ aligned: 2, discuss: 1, disagree: 1, saveActions: 1, total: 4 }))
+      .toBe('✅ 2 aligned · 💬 1 discuss · ❌ 1 disagree · 📌 1 saved actions · convergence 63%');
   });
 
   it('limits validation history and escapes HTML-sensitive topic text for status/dashboard output', () => {

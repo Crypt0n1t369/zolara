@@ -5,4 +5,4 @@
  * project bot flows share one Telegram API boundary instead of maintaining
  * duplicate lifecycle clients.
  */
-export { getManagedBotToken, setManagedBotWebhook, deleteManagedBotWebhook, getManagedBotInfo, generateBotUsername, buildCreationLink, setBotCommands, } from '../../telegram/managed-bots-api';
+export { PROJECT_BOT_ALLOWED_UPDATES, getManagedBotToken, setManagedBotWebhook, deleteManagedBotWebhook, getManagedBotInfo, generateBotUsername, buildCreationLink, setBotCommands, } from '../../telegram/managed-bots-api';

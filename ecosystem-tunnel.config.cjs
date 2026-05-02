@@ -1,9 +1,16 @@
+const tunnelName = process.env.ZOLARA_TUNNEL_NAME || 'zolara-prod';
+
 module.exports = {
   apps: [
     {
       name: 'cloudflared',
       script: 'cloudflared',
-      args: 'tunnel --url http://localhost:3000',
+      // Production/tester tunnel must be named so WEBHOOK_BASE_URL stays stable.
+      // One-time setup:
+      //   cloudflared tunnel create zolara-prod
+      //   cloudflared tunnel route dns zolara-prod <stable-hostname>
+      //   create ~/.cloudflared/config.yml with ingress to http://localhost:3000
+      args: `tunnel run ${tunnelName}`,
       cwd: '/tmp',
       interpreter: 'none',
       autorestart: true,
@@ -11,7 +18,7 @@ module.exports = {
       min_uptime: 5000,
       restart_delay: 3000,
       env: {
-        CLOUDFLARED_LOG: '/tmp/cloudflared.log',
+        ZOLARA_TUNNEL_NAME: tunnelName,
       },
     },
   ],

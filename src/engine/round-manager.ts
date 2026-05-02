@@ -8,13 +8,14 @@
 
 import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../data/db';
-import { rounds, projects, members, questions, responses, users } from '../data/schema/projects';
+import { rounds, projects, members, questions, responses, users, admins } from '../data/schema/projects';
 import { runSynthesis, getMinimumResponses, meetsMinimumThreshold } from './synthesis/pipeline';
 import { generateQuestions, personalizeQuestion } from './question/generator';
 import { llm } from './llm/minimax';
 import {
   sendQuestionDM,
   postReportToGroupChat,
+  sendMessage,
 } from '../util/telegram-sender';
 import {
   logger,
@@ -487,14 +488,17 @@ export async function processRoundCompletion(roundId: string, projectId: string)
     // Transition to complete
     await transitionToComplete(roundId, reportData);
 
-    // Post to group
+    // Post to group, or fall back to the owner DM when no group is configured yet.
     const groupIds = project.groupIds ?? [];
     if (groupIds.length > 0) {
       try {
         await postReportToGroup(projectId, groupIds[0], reportData, round.roundNumber, responseCount, round.memberCount ?? 0);
       } catch (tgErr) {
         telegramLog.sendFailed('postReportToGroup failed', { projectId, chatId: groupIds[0], roundId }, tgErr);
+        await postReportToAdminFallback(projectId, reportData, round.roundNumber, responseCount, round.memberCount ?? 0, 'group_send_failed');
       }
+    } else {
+      await postReportToAdminFallback(projectId, reportData, round.roundNumber, responseCount, round.memberCount ?? 0, 'no_group_configured');
     }
   } catch (err) {
     roundLog.synthesisFailed(roundId, { projectId }, err);
@@ -560,4 +564,64 @@ async function postReportToGroup(
   memberCount: number
 ): Promise<{ messageIds: number[] }> {
   return postReportToGroupChat(projectId, groupId, reportData, roundNumber, responseCount, memberCount);
+}
+
+async function postReportToAdminFallback(
+  projectId: string,
+  reportData: Record<string, unknown>,
+  roundNumber: number,
+  responseCount: number,
+  memberCount: number,
+  reason: 'no_group_configured' | 'group_send_failed'
+): Promise<void> {
+  const [project] = await db
+    .select({ name: projects.name, adminId: projects.adminId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!project?.adminId) return;
+
+  const [admin] = await db
+    .select({ telegramId: admins.telegramId })
+    .from(admins)
+    .where(eq(admins.id, Number(project.adminId)))
+    .limit(1);
+
+  if (!admin?.telegramId) return;
+
+  const convergenceScore = (reportData['convergenceScore'] as number) ?? 50;
+  const convergenceTier = (reportData['convergenceTier'] as string) ?? 'operational';
+  const themes = (reportData['themes'] as Array<{ name: string; alignment: string; summary: string }>) ?? [];
+  const commonGround = (reportData['commonGround'] as string[]) ?? [];
+  const creativeTensions = (reportData['creativeTensions'] as string[]) ?? [];
+  const actionItems = (reportData['actionItems'] as Array<{ title: string }>) ?? [];
+  const reasonText = reason === 'no_group_configured'
+    ? 'No Telegram group is configured yet, so I’m sending this report to you here.'
+    : 'I could not post to the configured group, so I’m sending this report to you here.';
+
+  const lines = [
+    `🌀 *Round ${roundNumber} synthesis — ${project.name ?? 'your project'}*`,
+    '',
+    reasonText,
+    '',
+    `📊 ${responseCount}/${memberCount} members responded`,
+    `📈 Convergence: ${convergenceScore}% (${convergenceTier})`,
+  ];
+
+  if (themes.length > 0) {
+    lines.push('', '*Theme alignment*');
+    for (const theme of themes.slice(0, 5)) {
+      const emoji = theme.alignment === 'aligned' ? '✅' : theme.alignment === 'tension' ? '⚡' : '➖';
+      lines.push(`${emoji} *${theme.name}* — ${theme.summary}`);
+    }
+  }
+
+  if (commonGround.length > 0) lines.push('', '*Common ground*', ...commonGround.slice(0, 5).map((g) => `• ${g}`));
+  if (creativeTensions.length > 0) lines.push('', '*Creative tensions*', ...creativeTensions.slice(0, 5).map((t) => `⚡ ${t}`));
+  if (actionItems.length > 0) lines.push('', '*Action items*', ...actionItems.slice(0, 5).map((a) => `→ ${a.title}`));
+  lines.push('', 'To post future reports in the group, add the project bot to your Telegram group as admin, then run /invite.');
+
+  const sent = await sendMessage(admin.telegramId, lines.join('\n'), { parseMode: 'Markdown' });
+  await auditEvent('report_admin_dm_fallback', { roundNumber, responseCount, memberCount, reason, sent: Boolean(sent) }, projectId);
 }

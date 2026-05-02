@@ -53,8 +53,14 @@ describe('lifecycle worker', () => {
   it('runs validation deadlines before round deadlines under a Redis NX lock', async () => {
     const { LOCK_KEY, runLifecycleWorkerOnce } = await import('./util/lifecycle-worker');
 
-    await runLifecycleWorkerOnce();
+    const summary = await runLifecycleWorkerOnce();
 
+    expect(summary).toMatchObject({
+      locked: false,
+      validation: { checked: 1, expired: 1, processed: 1, failed: 0 },
+      rounds: { checked: 2, expired: 1, processed: 1, failed: 0 },
+      totals: { checked: 3, expired: 2, processed: 2, failed: 0 },
+    });
     expect(redisSet).toHaveBeenCalledWith(LOCK_KEY, expect.any(String), 'EX', expect.any(Number), 'NX');
     expect(checkValidationDeadlines).toHaveBeenCalledTimes(1);
     expect(checkRoundDeadlines).toHaveBeenCalledTimes(1);
@@ -66,8 +72,14 @@ describe('lifecycle worker', () => {
     redisSet.mockResolvedValue(null);
     const { runLifecycleWorkerOnce } = await import('./util/lifecycle-worker');
 
-    await runLifecycleWorkerOnce();
+    const summary = await runLifecycleWorkerOnce();
 
+    expect(summary).toMatchObject({
+      locked: true,
+      validation: { checked: 0, expired: 0, processed: 0, failed: 0 },
+      rounds: { checked: 0, expired: 0, processed: 0, failed: 0 },
+      totals: { checked: 0, expired: 0, processed: 0, failed: 0 },
+    });
     expect(checkValidationDeadlines).not.toHaveBeenCalled();
     expect(checkRoundDeadlines).not.toHaveBeenCalled();
     expect(redisDel).not.toHaveBeenCalled();

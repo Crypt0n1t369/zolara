@@ -3,7 +3,7 @@
  * Handles the business logic of creating a new managed bot project.
  */
 
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../../data/db';
 import { projects, admins } from '../../data/schema/projects';
 import { encrypt, hashToken, generateSecret } from '../../util/crypto';
@@ -133,16 +133,32 @@ export async function finalizeProjectBot(
     throw new Error('Admin not found for telegram ID: ' + adminTelegramId);
   }
 
-  // Find the most recent pending project for this admin (by DB admin ID)
+  // Idempotency: Telegram can retry managed_bot_created/my_chat_member updates.
+  // If this bot is already attached to one of this admin's projects, return success.
+  const [existingProject] = await db
+    .select({ id: projects.id, botUsername: projects.botUsername })
+    .from(projects)
+    .where(and(eq(projects.adminId, admin.id), eq(projects.botTelegramId, botUserId)))
+    .limit(1);
+
+  if (existingProject) {
+    return {
+      projectId: existingProject.id,
+      botUsername: existingProject.botUsername ?? suggestedUsername ?? 'unknown',
+    };
+  }
+
+  // Find the most recent pending project for this admin (by DB admin ID).
+  // Do not let a newer active/archived project mask an older pending project.
   const pendingProjects = await db
     .select()
     .from(projects)
-    .where(eq(projects.adminId, admin.id))
+    .where(and(eq(projects.adminId, admin.id), eq(projects.status, 'pending')))
     .orderBy(desc(projects.createdAt))
     .limit(1);
 
   const project = pendingProjects[0];
-  if (!project || project.status !== 'pending') {
+  if (!project) {
     throw new Error('No pending project found for admin');
   }
 
@@ -159,14 +175,18 @@ export async function finalizeProjectBot(
   // Build webhook URL (must match the route registered in src/server/index.ts)
   const webhookUrl = `${config.WEBHOOK_BASE_URL}/webhook/projectbot/${tokenHash}`;
 
-  // Set webhook for the new bot
-  await setManagedBotWebhook(botToken, webhookUrl, webhookSecret);
+  // Set webhook for the new bot and fail loudly if Telegram rejects it.
+  const webhookResult = await setManagedBotWebhook(botToken, webhookUrl, webhookSecret);
+  if (!webhookResult.success) {
+    throw new Error(`setWebhook failed: ${webhookResult.description ?? 'Unknown error'}`);
+  }
 
   // Update project with bot info
   const updated = await db
     .update(projects)
     .set({
       botTelegramId: botUserId,
+      botUsername: suggestedUsername ?? null,
       botTokenHash: tokenHash,
       botTokenEncrypted: encryptedToken,
       webhookSecret,

@@ -14,5 +14,5 @@ RUN npm run build
 
 EXPOSE 3000
 
-# For development, use tsx directly (no build step)
-CMD ["npm", "run", "dev"]
+# Run compiled production server
+CMD ["npm", "start"]

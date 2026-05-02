@@ -5,8 +5,8 @@ export async function auditEvent(eventType, metadata, projectId, memberId) {
     try {
         await db.insert(engagementEvents).values({
             eventType,
-            ...(projectId ? { projectId } : {}),
-            ...(memberId ? { memberId } : {}),
+            projectId: projectId ?? null,
+            memberId: memberId ?? null,
             metadata: {
                 ...metadata,
                 auditedAt: new Date().toISOString(),

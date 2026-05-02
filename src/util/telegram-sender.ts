@@ -13,13 +13,14 @@
 import { Bot } from 'grammy';
 import { config } from '../config';
 import { db } from '../data/db';
-import { projects } from '../data/schema/projects';
+import { projects, users } from '../data/schema/projects';
 import { eq } from 'drizzle-orm';
 import { redis } from '../data/redis';
 import { decrypt } from './crypto';
 import { telegram, redis as redisLog } from './logger';
 import { auditEvent } from './audit';
 import { withRetry } from './resilience';
+import { formatQuestionPersonalization } from '../project/individual-profile';
 
 // Per-project bot instances (cached)
 const projectBotCache = new Map<string, Bot>();
@@ -140,9 +141,22 @@ export async function sendQuestionDM(
   topic?: string | null
 ): Promise<number | null> {
   const topicText = topic ? `Topic: *${topic}*\n\n` : '';
+  let personalizationText = '';
+  try {
+    const [user] = await db
+      .select({ communicationProfile: users.communicationProfile })
+      .from(users)
+      .where(eq(users.telegramId, userId))
+      .limit(1);
+    personalizationText = formatQuestionPersonalization(user?.communicationProfile, projectId);
+  } catch (err) {
+    telegram.sendFailed('Failed to load question personalization; sending unpersonalized question', { userId, projectId }, err);
+  }
+
   const message =
     `🌀 *Round ${roundNumber} — your perspective*\n\n` +
     topicText +
+    personalizationText +
     `${questionText}\n\n` +
     `Reply in your own words. A few sentences is enough unless you want to go deeper.\n\n` +
     `Your response helps Zolara write a balanced synthesis for the group. Reports follow the project’s anonymity settings.`;
