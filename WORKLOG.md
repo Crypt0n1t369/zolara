@@ -2517,3 +2517,20 @@ Next actions:
 **Current state**
 - Tester go-live has a concise final checklist that matches current tooling and known blockers.
 - Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 03:14 — Added repo landing README and ignored build output
+
+**What was built**
+- Added `README.md` with concise tester-readiness status, live blockers, go-live doc links, and the core diagnostics/ops commands.
+- Added `dist/` to `.gitignore` so local TypeScript build output like `dist/lifecycle-worker-cli.js` no longer appears as untracked noise during heartbeat checks.
+
+**What was tested**
+- Ran `npm run readiness:check`; current failures remain the known 9 local Cloudflare/stable-webhook blockers.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `npm run deploy:render:check`; passed.
+
+**Current state**
+- GitHub/repo landing page now points operators directly to the final tester-readiness runbooks.
+- Working tree hygiene is improved for repeated build/check runs.
+- Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
