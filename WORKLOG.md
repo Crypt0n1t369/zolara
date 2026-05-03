@@ -2534,3 +2534,22 @@ Next actions:
 - GitHub/repo landing page now points operators directly to the final tester-readiness runbooks.
 - Working tree hygiene is improved for repeated build/check runs.
 - Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.
+
+## 2026-05-03 03:44 — Tightened stable-host diagnostics for placeholder domains
+
+**What was built**
+- Updated `readiness:check` and `smoke:status` so example/reserved hosts are blockers, not “stable-looking” placeholders.
+- Blocked placeholder/reserved hosts include `example.com`, `*.example.com`, `.test`, `.invalid`, localhost variants, and related reserved names.
+- Updated smoke next actions so external mode now tells operators to use the real Render/external HTTPS service URL instead of Cloudflare wording when a placeholder host is configured.
+
+**What was tested**
+- Ran `npm run readiness:check`; current local failures remain the known Cloudflare/stable-webhook blockers.
+- Ran `ZOLARA_HOSTING_MODE=external WEBHOOK_BASE_URL=https://zolara.example.com npm run readiness:check`; it now fails explicitly on the placeholder host.
+- Ran `ZOLARA_HOSTING_MODE=external WEBHOOK_BASE_URL=https://zolara.example.com npm run smoke:status`; it now reports `stable_webhook_host` as false and gives the external-hosting remediation.
+- Ran `npm run build`; passed.
+- Ran `npm test`; 14 files / 139 tests passed.
+- Ran `npm run deploy:render:check`; passed.
+
+**Current state**
+- Diagnostics now catch placeholder URLs before a rehook/live smoke attempt.
+- Live readiness still requires provider-side token rotation, stable hosting/account setup, bot rehook, legacy-row cleanup approval, and E2E smoke.

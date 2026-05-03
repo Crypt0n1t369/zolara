@@ -45,6 +45,21 @@ function env(name: string): string | undefined {
 
 type WebhookBaseCheck = { base: string; hostname: string; isTryCloudflare: boolean };
 
+function isReservedPlaceholderHost(hostname: string): boolean {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '0.0.0.0'
+    || hostname === 'example.com'
+    || hostname === 'example.org'
+    || hostname === 'example.net'
+    || hostname.endsWith('.example.com')
+    || hostname.endsWith('.example.org')
+    || hostname.endsWith('.example.net')
+    || hostname.endsWith('.test')
+    || hostname.endsWith('.invalid')
+    || hostname.endsWith('.localhost');
+}
+
 function hostingMode(): 'cloudflare' | 'external' {
   return env('ZOLARA_HOSTING_MODE') === 'external' ? 'external' : 'cloudflare';
 }
@@ -77,6 +92,11 @@ async function checkWebhookBaseUrl(): Promise<WebhookBaseCheck | null> {
   if (isTryCloudflare) {
     fail('WEBHOOK_BASE_URL uses random trycloudflare.com; use a named Cloudflare Tunnel/stable hostname before testers');
     action('Run the stable webhook runbook: cloudflared tunnel login/create/route DNS, then update WEBHOOK_BASE_URL.');
+  } else if (isReservedPlaceholderHost(url.hostname)) {
+    fail(`WEBHOOK_BASE_URL uses placeholder/reserved hostname: ${url.hostname}`);
+    action(hostingMode() === 'external'
+      ? 'Set WEBHOOK_BASE_URL to the real external HTTPS service URL/custom domain, not an example or reserved hostname.'
+      : 'Set WEBHOOK_BASE_URL to the real named Cloudflare Tunnel hostname, not an example or reserved hostname.');
   } else {
     pass(`WEBHOOK_BASE_URL hostname is stable-looking: ${url.hostname}`);
   }

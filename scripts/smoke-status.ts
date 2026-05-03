@@ -34,6 +34,23 @@ function isRandomTryCloudflareHost(host: string | null): boolean {
   return Boolean(host?.endsWith('.trycloudflare.com'));
 }
 
+function isReservedPlaceholderHost(host: string | null): boolean {
+  return Boolean(host && (
+    host === 'localhost'
+    || host === '127.0.0.1'
+    || host === '0.0.0.0'
+    || host === 'example.com'
+    || host === 'example.org'
+    || host === 'example.net'
+    || host.endsWith('.example.com')
+    || host.endsWith('.example.org')
+    || host.endsWith('.example.net')
+    || host.endsWith('.test')
+    || host.endsWith('.invalid')
+    || host.endsWith('.localhost')
+  ));
+}
+
 function hostingMode(): 'cloudflare' | 'external' {
   return process.env.ZOLARA_HOSTING_MODE === 'external' ? 'external' : 'cloudflare';
 }
@@ -166,8 +183,8 @@ async function main(): Promise<void> {
     },
     {
       name: 'stable_webhook_host',
-      ok: !isRandomTryCloudflareHost(host),
-      detail: host ?? 'invalid WEBHOOK_BASE_URL',
+      ok: !isRandomTryCloudflareHost(host) && !isReservedPlaceholderHost(host),
+      detail: isReservedPlaceholderHost(host) ? `${host} is reserved/placeholder` : host ?? 'invalid WEBHOOK_BASE_URL',
     },
     await localHealthCheck(),
     await publicHealthCheck(),
@@ -385,8 +402,14 @@ async function main(): Promise<void> {
   for (const check of checks) {
     if (check.ok) continue;
     if (check.name === 'stable_webhook_host') {
-      addAction(nextActions, 'Provision a stable HTTPS hostname; random trycloudflare.com is not acceptable for testers.');
-      addAction(nextActions, 'Run the stable webhook runbook: cloudflared login/create/route DNS, then `npm run tunnel:prepare-config`.');
+      if (isReservedPlaceholderHost(host)) {
+        addAction(nextActions, mode === 'external'
+          ? 'Set WEBHOOK_BASE_URL to the real external HTTPS service URL/custom domain, not an example or reserved hostname.'
+          : 'Set WEBHOOK_BASE_URL to the real named Cloudflare Tunnel hostname, not an example or reserved hostname.');
+      } else {
+        addAction(nextActions, 'Provision a stable HTTPS hostname; random trycloudflare.com is not acceptable for testers.');
+        addAction(nextActions, 'Run the stable webhook runbook: cloudflared login/create/route DNS, then `npm run tunnel:prepare-config`.');
+      }
     } else if (check.name === 'public_health') {
       addAction(nextActions, mode === 'external'
         ? 'After the external backend is online, verify `curl <WEBHOOK_BASE_URL>/health` returns status=ok.'
